@@ -4,7 +4,7 @@ import { allThemes, themeSetting, applyTheme, loadPluginThemes, themeWarnings, D
 import { uiBlurEnabled, applyUiBlur, DEFAULT_UI_BLUR } from "./h3s_ui_blur.js";
 import { DEFAULT_UI_SCALE } from "./h3s_ui_scale.js";
 // Generation-only snapshots: checkpoints, LoRA stacks, characters and project content are never overwritten.
-const GENERATION_PRESET_FIELDS = ("piflow_steps aspect res_mode ratio image_ratio megapixels width height " +
+const GENERATION_PRESET_FIELDS = ("piflow_steps piflow_lora aspect res_mode ratio image_ratio megapixels width height " +
   "steps cfg denoise sampler scheduler sigmas shift_video shift_audio final_mode " +
   "draft_scale draft_steps draft_cfg draft_sampler draft_scheduler draft_sigmas " +
   "refine_steps refine_cfg refine_sampler refine_scheduler refine_sigmas refine_seed refine_sigma " +
@@ -182,6 +182,16 @@ export function installSettings(Editor, { C, h, ICON }) {
       this.toast(T("Режим генерации применён: {0}", mode === "full" ? T("1 этап") :
         mode === "stock" ? T("2 этапа · сток") : mode === "advanced" ? T("Независимые 2 прохода") :
         mode === "pi2" ? T("pi-H3 · 2 шага") : mode === "pi4" ? T("pi-H3 · 4 шага") : "Low Res → High Res"));
+      this.refreshGenerationPresetPanel();
+    },
+    /** pi-H3: the step switch inside the merged DWD mode (pi-Flow schedule, Euler, CFG 1). */
+    setPiSteps(n) {
+      const steps = n === 4 ? 4 : 2;
+      this.mutate((p) => { Object.assign(p.settings, {
+        final_mode: "full", quality: "final", piflow_steps: steps, steps,
+        cfg: 1, denoise: 1, sampler: "euler", scheduler: "simple", sigmas: "",
+      }); });
+      this.toast(T("pi-H3: {0} шага(ов)", steps));
       this.refreshGenerationPresetPanel();
     },
     /** Prefer the proven 3D backend for recipes. 2D stays manually selectable until GPU validation. */
@@ -529,6 +539,32 @@ export function installSettings(Editor, { C, h, ICON }) {
       try { await this.host.call("/h3lab/models/downloads/cancel", { id, discard: true }); this.toast(T("Загрузка отменена, недокачанный файл удалён")); this.pollModelDownloads(); this.dlMiniKick?.(); await this.refreshModelDownloads(); }
       catch (e) { this.toast(e.message || e, true); }
     },
+    /** Show the model file (or its destination folder) in the OS file manager. */
+    async dlReveal(id) {
+      try {
+        const r = await this.host.call("/h3lab/models/downloads/reveal", id ? { id } : {});
+        if (r?.path) this.toast(T("Открыто: {0}", r.path));
+      } catch (e) { this.toast(e.message || e, true); }
+    },
+    /** Delete the file with a two-step confirm (the button turns into «Точно?» for 4 s). */
+    async dlRemove(id, btn) {
+      const row = (this._mdl?.models || []).find((m) => m.id === id);
+      if (!row?._armed) {
+        if (row) row._armed = true;
+        if (btn) { btn.dataset.armed = "1"; btn.textContent = T("Точно?"); }
+        clearTimeout(this._mdlUnarm);
+        this._mdlUnarm = setTimeout(() => { if (row) row._armed = false; if (this.tool === "settings" && this._setTab === "dl") this.renderLeft(); }, 4000);
+        return;
+      }
+      row._armed = false;
+      try {
+        const r = await this.host.call("/h3lab/models/downloads/remove", { id });
+        const paths = (r?.removed || []).map((p) => String(p).split(/[\\/]/).pop()).join(", ");
+        this.toast(T("Удалено с диска: {0}", paths || id));
+        this.dlMiniKick?.();
+        await this.refreshModelDownloads();
+      } catch (e) { this.toast(e.message || e, true); this.renderLeft(); }
+    },
     fmtBytes(n) {
       n = Number(n) || 0;
       if (n >= 1e9) return (n / 1e9).toFixed(2) + " GB";
@@ -557,6 +593,14 @@ export function installSettings(Editor, { C, h, ICON }) {
       const stopping = job && job.state === "cancelling";
       const cancelB = (busy || st === "partial") ? h("button", { class: "h3l-btn sm h3l-mdl-cancel", disabled: stopping || undefined,
         title: T("Остановить и удалить недокачанный файл"), onclick: () => this.dlCancel(m.id) }, T("Отмена")) : null;
+      // file actions: show it in the file manager / free the disk space (two-step confirm, no modal)
+      const revealB = h("button", { class: "h3l-btn sm icon h3l-mdl-reveal",
+        title: st === "installed" ? T("Показать файл в проводнике") : T("Открыть папку, куда скачается файл"),
+        onclick: () => this.dlReveal(m.id) }, "📂");
+      const removeB = (st === "installed" || st === "partial") && !busy
+        ? h("button", { class: "h3l-btn sm icon h3l-mdl-remove", "data-armed": m._armed ? "1" : undefined,
+            title: T("Удалить файл с диска"), onclick: (ev) => this.dlRemove(m.id, ev.currentTarget) },
+            m._armed ? T("Точно?") : "🗑") : null;
       const btn = busy
         ? h("button", { class: "h3l-btn sm", disabled: stopping || undefined, title: T("Приостановить: недокачанный файл останется, загрузка продолжится с того же места"),
             onclick: () => this.dlPause(m.id) }, T("Пауза"))
@@ -568,7 +612,7 @@ export function installSettings(Editor, { C, h, ICON }) {
       return h("div", { class: "h3l-mdl-row" + (st === "installed" ? " ok" : "") + (m.optional ? " opt" : ""), "data-id": m.id },
         h("div", { class: "h3l-mdl-ico", "aria-hidden": "true" }, st === "installed" ? "✓" : "⬇"),
         h("div", { class: "h3l-mdl-body" }, meta, bar, err),
-        h("div", { class: "h3l-mdl-act" }, h("span", { class: "h3l-mdl-badge" }, badge), btn, cancelB));
+        h("div", { class: "h3l-mdl-act" }, h("span", { class: "h3l-mdl-badge" }, badge), revealB, removeB, btn, cancelB));
     },
     mdlDownloadsPanel() {
       const data = this._mdl, err = this._mdlErr;
@@ -582,6 +626,7 @@ export function installSettings(Editor, { C, h, ICON }) {
         h("div", null, h("h4", null, T("Загрузка моделей")),
           h("span", { class: "h3l-mdl-count" }, `${c.installed || 0}/${c.total || 0}`)),
         h("div", { class: "h3l-row" },
+          h("button", { class: "h3l-btn sm icon", title: T("Открыть папку моделей ComfyUI"), onclick: () => this.dlReveal("") }, "📂"),
           h("button", { class: "h3l-btn sm icon", title: T("Обновить статусы"), onclick: () => this.refreshModelDownloads() }, "↻"),
           h("button", { class: "h3l-btn sm primary", title: T("Скачать все обязательные модели (без опциональных)"),
             onclick: async () => {
@@ -715,6 +760,7 @@ export function installSettings(Editor, { C, h, ICON }) {
         title: glob ? T("Глобальные настройки и интерфейс — к значениям по умолчанию (API-ключи и проекты сохраняются)") : T("Настройки этого проекта — к глобальным (API-ключи и проекты сохраняются)"),
         onclick: () => this.askResetSettings() }, T("↺ Вернуть настройки по умолчанию"));
       // generation stages
+      if (!this._mp) this.mpLoad().then(() => { if (this.tool === "settings" && this._setTab === "gen") this.renderLeft(); });
       const smp = this.opts.samplers, sch = this.opts.schedulers;
       const lowhighTotal = Math.max(2, Math.trunc(Number(g.steps) || 2));
       const [lowhighLow] = C.lowhighParams(g, lowhighTotal);
@@ -746,8 +792,7 @@ export function installSettings(Editor, { C, h, ICON }) {
           pill(displayedGenMode === "stock", T("2 этапа · сток"), T("Оригинальный HiRes с абсолютной σ; параметры этапа 1 общие с черновиком"), () => this.chooseGenerationMode("stock")),
           pill(displayedGenMode === "advanced", T("Независимые 2 прохода"), T("Независимый рефайнер с BasicScheduler и отдельным сэмплером"), () => this.chooseGenerationMode("advanced")),
           pill(displayedGenMode === "luna", "Low Res → High Res", T("Один запуск с настраиваемым разделением шагов и обученным латентным апскейлером"), () => this.chooseGenerationMode("luna")),
-          pill(displayedGenMode === "pi2", T("π pi-H3 · 2 шага"), T("Эксперимент · только pruned-модель · адаптер DWD"), () => this.chooseGenerationMode("pi2")),
-          pill(displayedGenMode === "pi4", T("π pi-H3 · 4 шага"), T("Эксперимент · только pruned-модель · адаптер DWD"), () => this.chooseGenerationMode("pi4"))),
+          pill(uiPi, T("π pi-H3 · DWD"), T("Эксперимент · только pruned-модель · адаптер DWD, шаги и файл ниже"), () => { if (!uiPi) this.chooseGenerationMode("pi2"); })),
         confirmGenMode(),
         h("div", { class: "h3l-note" }, uiPi ? T("pi-H3: одноэтапная генерация, {0} шага(ов), Euler, CFG 1 и расписание pi-Flow задаются автоматически.", displayedGenMode === "pi2" ? 2 : 4)
           : uiLuna ? T("Low Res: {0} шаг(ов), High Res: {1} шаг(ов). Масштаб — доля конечной ширины и высоты; High Res denoise управляет начальной σ второго прохода. Внешние SIGMAS не используются.", lowhighLow, lowhighTotal - lowhighLow)
@@ -755,7 +800,16 @@ export function installSettings(Editor, { C, h, ICON }) {
           : T("1 этап: каждый отрезок сразу в {0}×{1}.", w, hh)),
         !uiPi ? h("div", { class: "h3l-note" }, T("Сначала выберите режим выше, затем нажмите «Применить». «Черновик» клипа использует параметры «Прохода 1» ниже.")) : null,
         displayedGenMode.startsWith("pi") ? h("div", { class: "h3l-note warn" },
-          T("Экспериментальный pi-H3 DWD: только pruned-модель MiniMax H3, DWD декодирует готовые кадры вместо видео-VAE; видео-VAE остаётся для входных изображений и референсов, аудио-VAE — для звука. 2 шага: pi_h3_2step_dwd_adapter_int8_convrot.safetensors, max_raw_t 0.930; 4 шага: pi_h3_4step_dwd_adapter_int8_convrot.safetensors, max_raw_t 0.960. final_step_size_scale 0.60. Режим одноэтапный; для рендера требуется пресет с pruned-моделью и отключённые входы MODEL, SAMPLER и SIGMAS ноды H3ZeroStudio.")) : null,
+          T("Экспериментальный pi-H3 DWD: только pruned-модель MiniMax H3, готовые кадры декодирует DWD вместо видео-VAE (видео-VAE остаётся для референсов, аудио-VAE — для звука), final_step_size_scale 0.60. Нужен пресет с pruned-моделью и отключённые входы MODEL, SAMPLER и SIGMAS ноды H3ZeroStudio.")) : null,
+        uiPi ? h("div", { class: "h3l-grid2" },
+          this.field(T("Шаги pi-H3"), h("div", { class: "h3l-pills" },
+            pill(g.piflow_steps !== 4, "2", T("2 шага · max_raw_t 0.930"), () => this.setPiSteps(2)),
+            pill(g.piflow_steps === 4, "4", T("4 шага · max_raw_t 0.960"), () => this.setPiSteps(4)))),
+          this.field(T("Адаптер DWD (LoRA)"), h("div", { class: "h3l-row" },
+            h("button", { type: "button", class: "h3l-btn sm", title: T("Выбрать файл адаптера pi-H3 DWD: он может лежать в любой папке loras"),
+              onclick: (ev) => this.mpLoraPicker(ev.currentTarget, g.piflow_lora || "", (f) => set("piflow_lora", f)) },
+              g.piflow_lora ? g.piflow_lora.split(/[\\/]/).pop() : T("авто · встроенное имя для {0} шагов", g.piflow_steps === 4 ? 4 : 2)),
+            g.piflow_lora ? h("button", { type: "button", class: "h3l-btn sm", title: T("Вернуть встроенное имя файла"), onclick: () => set("piflow_lora", "") }, "✕") : null))) : null,
         !uiPi ? h("details", { class: "h3l-gen-manage" }, h("summary", null, T("Быстрые сценарии и эксперименты")),
           h("div", { class: "h3l-row wrap" },
             h("button", { type: "button", class: "h3l-btn sm",
@@ -870,9 +924,10 @@ export function installSettings(Editor, { C, h, ICON }) {
         ...(g.self_anchor_voice === true ? [h("div", { class: "h3l-note warn" },
           T("Автоякорь НЕ разделяет голоса. Если в первом отрезке говорят несколько персонажей, отключите эту функцию и используйте отдельный голосовой референс в карточке каждого персонажа."))] : []),
         this.field(T("Способ продолжения видео"), h("div", { class: "h3l-pills" },
-          pill(g.continuation_method === "overlap", "overlap", T("Оригинальный"), () => set("continuation_method", "overlap")),
+          pill(g.continuation_method === "h3studio", "h3studio", T("Studio · цвет Lab"), () => { set("continuation_method", "h3studio"); set("lock_overlap", true); }),
           pill(g.continuation_method === "protected", "protected", T("PROTECTED · латентный контекст"), () => { set("continuation_method", "protected"); set("lock_overlap", true); }),
-          pill(g.continuation_method === "h3studio", "h3studio", T("Studio · цвет Lab"), () => { set("continuation_method", "h3studio"); set("lock_overlap", true); }))),
+          pill(g.continuation_method === "overlap", "overlap", T("Оригинальный"), () => set("continuation_method", "overlap")))),
+        h("div", { class: "h3l-note" }, T("Studio выбран по умолчанию: на реальном стыке с человеком шаг люмы ×0.8–1.1 и дрейф тона вдвое меньше, чем у PROTECTED. PROTECTED и Оригинальный оставлены для старых проектов.")),
         this.toggle(T("Фиксировать перекрытие"), g.lock_overlap, (v) => set("lock_overlap", v), T("Кадры перекрытия берутся из готового предыдущего отрезка")),
         ...(g.continuation_method !== "overlap" ? [] : [this.toggle(T("Последний кадр как <Picture N>"), g.continuity_ref, (v) => set("continuity_ref", v), T("Последний кадр предыдущего отрезка — референс"))]),
         h("div", null, h("div", { class: "h3l-lbl" }, T("Фраза-продолжение"), h("em", null, T("{n} — номер картинки")),

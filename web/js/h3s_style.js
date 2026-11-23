@@ -1177,6 +1177,8 @@ details.h3l-det > .in { margin-top:10px; display:flex; flex-direction:column; ga
 .h3l-mdl-meta b{font-size:12.5px;font-weight:600;line-height:1.35}
 .h3l-mdl-meta small{font-size:10.5px;color:var(--mut);word-break:break-all}
 .h3l-mdl-act{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+.h3l-mdl-act .h3l-mdl-remove[data-armed]{color:#fca5a5;border-color:#fca5a5}
+.h3l-mdl-act .h3l-mdl-reveal,.h3l-mdl-act .h3l-mdl-remove{min-width:30px;padding:2px 6px}
 .h3l-mdl-badge{font-size:10px;color:var(--mut)}
 .h3l-mdl-ok{color:var(--ok);font-weight:700}
 .h3l-mdl-bar{position:relative;height:16px;margin-top:6px;border-radius:6px;background:rgba(0,0,0,.25);overflow:hidden;border:1px solid var(--line)}

@@ -645,3 +645,74 @@ def ui_prefs_set(patch: dict[str, Any]) -> dict[str, Any]:
 
 def required_missing_count() -> int:
     return status_scan()["counts"]["required_missing"]
+
+
+# ---------------------------------------------------------------- file actions (reveal / remove)
+
+def _open_in_file_manager(path: str) -> None:
+    """Show a file (selected) or a folder in the OS file manager — the user clicked the button."""
+    import subprocess
+    import sys
+    p = os.path.normpath(path)
+    if os.name == "nt":
+        if os.path.isfile(p):
+            subprocess.Popen(["explorer", "/select,", p])
+        else:
+            os.startfile(p)  # noqa: S606
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", "-R", p] if os.path.isfile(p) else ["open", p])
+    else:
+        subprocess.Popen(["xdg-open", os.path.dirname(p) if os.path.isfile(p) else p])
+
+
+def reveal(mid: str = "") -> dict[str, Any]:
+    """Open the installed file, or the folder the download would go to, or the models root."""
+    if mid:
+        m = by_id(mid)
+        if not m:
+            raise ValueError("Неизвестная модель")
+        found = find_installed(m["folder"], _names_for(m))
+        if found:
+            target = found
+        else:
+            roots = _folder_roots(m["folder"])
+            if not roots:
+                raise ValueError(f"Папка «{m['folder']}» не зарегистрирована в ComfyUI")
+            if not os.path.isdir(roots[0]):
+                os.makedirs(roots[0], exist_ok=True)
+            target = roots[0]
+    else:
+        import folder_paths
+        target = os.path.abspath(folder_paths.models_dir)
+    if not target or not os.path.exists(target):
+        raise ValueError("Файл или папка не найдены")
+    _open_in_file_manager(target)
+    return {"path": target}
+
+
+def remove(mid: str) -> dict[str, Any]:
+    """Delete the installed file (or the partial one) of a manifest entry. Only files that match the
+    manifest's own names inside the registered model folders are touched."""
+    m = by_id(mid)
+    if not m:
+        raise ValueError("Неизвестная модель")
+    job = _jobs.get(mid)
+    if job and job.get("state") in ("running", "queued", "cancelling"):
+        raise RuntimeError("Сначала остановите загрузку")
+    removed = []
+    found = find_installed(m["folder"], _names_for(m))
+    if found and os.path.isfile(found):
+        os.remove(found)
+        removed.append(found)
+    try:
+        part = safe_target_path(m["folder"], m["filename"]) + ".part"
+        if os.path.isfile(part):
+            os.remove(part)
+            removed.append(part)
+    except Exception:
+        pass
+    if not removed:
+        raise ValueError("Файл не найден")
+    with _lock:
+        _jobs.pop(mid, None)
+    return {"removed": removed, "freed": sum(1 for _ in removed), "scan": status_scan()}

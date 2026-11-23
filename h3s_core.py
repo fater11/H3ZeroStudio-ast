@@ -67,7 +67,7 @@ DEFAULT_SETTINGS = {
                                # (reaches back before it, independent of the video overlap); 0 = just the overlap
     "self_anchor_voice": False,  # experimental: first generated voice as <Audio 1> on later full-pass extensions
     "lock_overlap": True,
-    "continuation_method": "protected",  # overlap (original) | protected (locked latent carry) | h3studio (anchored latent + Lab RGB continuity)
+    "continuation_method": "h3studio",  # h3studio (best on real seams: latent calibration + Lab tone) | protected | overlap
     "continuity_ref": True,    # last frame of previous segment as extra <Picture N>
     "continuity_phrase": DEFAULT_CONTINUITY,
     "ref_size": "match",
@@ -92,6 +92,7 @@ DEFAULT_SETTINGS = {
     "quality": "final",        # "final" | "draft"
     "final_mode": "full",      # "full" | "refine" (switched to "refine" when the user first turns drafts on)
     "piflow_steps": 0,        # 0 = normal H3; 2/4 = LakonLab pi-H3 DWD (pruned base only)
+    "piflow_lora": "",         # the DWD adapter file ("" = pi_h3_<n>step_dwd_adapter_int8_convrot.safetensors in models/loras)
     "draft_scale": 0.5,        # linear size of the draft (0.5 = a quarter of the pixels)
     "lowhigh_low_steps": 0,    # Low/High: 0 = 2/3 of total steps automatically
     "lowhigh_scale": 0.60,     # Low Res linear fraction of the final width and height
@@ -137,7 +138,7 @@ DEFAULT_SETTINGS = {
 STAGE_KEYS = ("draft_sampler", "draft_scheduler", "draft_cfg", "refine_sampler", "refine_scheduler", "refine_cfg")
 RUN_KINDS = ("draft", "refine", "full")
 # «Настройки»: set-once settings shared by all projects (unless a project keeps its own: settings_scope="project")
-GLOBAL_KEYS = ("final_mode", "piflow_steps", "steps", "cfg", "denoise", "sampler", "scheduler", "shift_video", "shift_audio",
+GLOBAL_KEYS = ("final_mode", "piflow_steps", "piflow_lora", "steps", "cfg", "denoise", "sampler", "scheduler", "shift_video", "shift_audio",
                "lowhigh_low_steps", "lowhigh_scale", "lowhigh_denoise", "high_sigma_schedule",
                "draft_scale", "draft_steps", "draft_sampler", "draft_scheduler", "draft_cfg",
                "refine_sigma", "refine_schedule_mode", "refine_denoise", "refine_identity_images", "refine_steps", "refine_seed", "refine_sampler", "refine_scheduler", "refine_cfg",
@@ -862,13 +863,14 @@ def normalize_project(p):
     ir = parse_ratio(_num(st.get("image_ratio"), 0))
     st["image_ratio"] = round(ir, 5) if ir else 0.0
     st["kf_fit"] = st.get("kf_fit") if st.get("kf_fit") in KF_FITS else "crop"
-    st["continuation_method"] = st.get("continuation_method") if st.get("continuation_method") in ("protected", "overlap", "h3studio") else "protected"
+    st["continuation_method"] = st.get("continuation_method") if st.get("continuation_method") in ("protected", "overlap", "h3studio") else "h3studio"
     if st["continuation_method"] in ("protected", "h3studio"):
         st["lock_overlap"] = True
     st["kf_pad"] = st.get("kf_pad") if st.get("kf_pad") in KF_PADS else "blur"
     st["quality"] = "draft" if st.get("quality") == "draft" else "final"
     st["final_mode"] = st.get("final_mode") if st.get("final_mode") in ("refine", "luna") else "full"
     st["piflow_steps"] = int(_num(st.get("piflow_steps"), 0)) if int(_num(st.get("piflow_steps"), 0)) in (2, 4) and st["final_mode"] == "full" else 0
+    st["piflow_lora"] = str(st.get("piflow_lora") or "").strip()[:200]
     st["lowhigh_low_steps"] = max(0, min(199, int(_num(st.get("lowhigh_low_steps"), 0))))
     st["lowhigh_scale"] = _round(max(0.25, min(1.0, _num(st.get("lowhigh_scale"), 0.60))), 3)
     st["lowhigh_denoise"] = _round(max(0.10, min(1.0, _num(st.get("lowhigh_denoise"), 0.65))), 3)

@@ -2609,10 +2609,16 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         if proj.get("regions"):
             raise ValueError("pi-H3 DWD: режим экспериментальный; перегенерация участков пока не поддерживается")
         import folder_paths
-        filename = f"pi_h3_{pi_n}step_dwd_adapter_int8_convrot.safetensors"
+        # The DWD adapter may live in any registered loras folder (extra_model_paths included), so the
+        # project names the file; the built-in names stay the default.
+        filename = (str(proj["settings"].get("piflow_lora") or "").strip()
+                    or f"pi_h3_{pi_n}step_dwd_adapter_int8_convrot.safetensors")
         adapter_file = folder_paths.get_full_path("loras", filename)
+        if not adapter_file and os.path.isabs(filename) and os.path.isfile(filename):
+            adapter_file = filename
         if not adapter_file or not os.path.isfile(adapter_file):
-            raise FileNotFoundError(f"pi-H3 DWD: не найден адаптер models/loras/{filename}")
+            raise FileNotFoundError(
+                f"pi-H3 DWD: не найден адаптер «{filename}» — выберите файл в «Настройки → Генерация → pi-H3 · адаптер DWD»")
         stat = os.stat(adapter_file)
         proj["settings"]["_piflow_env"] = [filename, stat.st_size, stat.st_mtime_ns]
         for i, seg in enumerate(proj["segments"]):

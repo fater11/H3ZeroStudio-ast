@@ -23,14 +23,14 @@ export const VIDEO_REF_PHRASE = "Use {tags} as the motion reference of this shot
 export const DEFAULT_SETTINGS = {
   model_preset: "", kf_preset: "", prompt: "", negative: "", aspect: "16:9", res_mode: "mp", ratio: "2.39:1", image_ratio: 0, kf_fit: "crop", kf_pad: "blur", megapixels: 0.5, width: 960, height: 544,
   steps: 20, cfg: 1.0, sampler: "res_multistep", scheduler: "simple", shift_video: 12.0, shift_audio: 3.0,
-  seed: 0, fps: FPS, denoise: 1.0, overlap_blocks: 1, audio_context_sec: 1.0, self_anchor_voice: false, lock_overlap: true, continuation_method: "protected", continuity_ref: true,
+  seed: 0, fps: FPS, denoise: 1.0, overlap_blocks: 1, audio_context_sec: 1.0, self_anchor_voice: false, lock_overlap: true, continuation_method: "h3studio", continuity_ref: true,
   continuity_phrase: DEFAULT_CONTINUITY, ref_size: "match", cache: true, resume_only: false,
   audio_seam_lock: true, audio_xfade: true, audio_xfade_sec: 0.4, audio_match: true, audio_declick: true, level_lock: true, level_lock_frames: 12, magnet: false, vram_headroom_gb: 0,
   preview_tiny_vae: "auto", preview_max_res: 512, preview_quality: 80, preview_frames: 48,
   preview_fps: 0, preview_suppress: true, preview_audio: true,
   verbose_log: true,
   // draft mode (see h3s_core.py): quality "final" | "draft"; final_mode "full" | "refine" (final from the draft)
-  quality: "final", final_mode: "full", piflow_steps: 0, draft_scale: 0.5, draft_steps: 0, lowhigh_low_steps: 0, lowhigh_scale: 0.60, lowhigh_denoise: 0.65, high_sigma_schedule: "default", refine_sigma: 0.4, refine_schedule_mode: "sigma", refine_denoise: 0.30, refine_identity_images: false, refine_steps: 0, refine_seed: -1, upscale_method: "learned", upscale_rev: 5, seg_upscale: { method: "latent", scale: 2 }, upscale_chunk_sec: 5.0, upscale_chunk_overlap: 1, upscale_profiles: null,
+  quality: "final", final_mode: "full", piflow_steps: 0, piflow_lora: "", draft_scale: 0.5, draft_steps: 0, lowhigh_low_steps: 0, lowhigh_scale: 0.60, lowhigh_denoise: 0.65, high_sigma_schedule: "default", refine_sigma: 0.4, refine_schedule_mode: "sigma", refine_denoise: 0.30, refine_identity_images: false, refine_steps: 0, refine_seed: -1, upscale_method: "learned", upscale_rev: 5, seg_upscale: { method: "latent", scale: 2 }, upscale_chunk_sec: 5.0, upscale_chunk_overlap: 1, upscale_profiles: null,
   draft_sampler: "", draft_scheduler: "", draft_cfg: 0, refine_sampler: "", refine_scheduler: "", refine_cfg: 0, settings_scope: "project",
   // «custom SIGMAS» schedules (with the scheduler of the same level): "1.0, 0.5, 0.0" — the exact list
   // replaces the model's curve, the step count is len − 1
@@ -241,7 +241,7 @@ export const upscalable = (seg) => !!seg.upscale && !(seg.freeze && seg.freeze.u
 export const STAGE_KEYS = ["draft_sampler", "draft_scheduler", "draft_cfg", "refine_sampler", "refine_scheduler", "refine_cfg"];
 export const RUN_KINDS = ["draft", "refine", "full"];
 /** «Настройки»: set-once settings shared by all projects (mirror of h3s_core.GLOBAL_KEYS). */
-export const GLOBAL_KEYS = ["final_mode", "piflow_steps", "steps", "cfg", "denoise", "sampler", "scheduler", "shift_video", "shift_audio",
+export const GLOBAL_KEYS = ["final_mode", "piflow_steps", "piflow_lora", "steps", "cfg", "denoise", "sampler", "scheduler", "shift_video", "shift_audio",
                "lowhigh_low_steps", "lowhigh_scale", "lowhigh_denoise", "high_sigma_schedule",
                "draft_scale", "draft_steps", "draft_sampler", "draft_scheduler", "draft_cfg",
                "refine_sigma", "refine_schedule_mode", "refine_denoise", "refine_identity_images", "refine_steps", "refine_seed", "refine_sampler", "refine_scheduler", "refine_cfg",
@@ -636,11 +636,12 @@ export function normalizeProject(p) {
     st.quality = st.quality === "draft" ? "draft" : "final";
     st.final_mode = ["full", "refine", "luna"].includes(st.final_mode) ? st.final_mode : "full";
     st.piflow_steps = st.final_mode === "full" && [2, 4].includes(Math.trunc(num(st.piflow_steps, 0))) ? Math.trunc(num(st.piflow_steps, 0)) : 0;
+    st.piflow_lora = String(st.piflow_lora || "").trim().slice(0, 200);
     st.lowhigh_low_steps = Math.max(0, Math.min(199, Math.trunc(num(st.lowhigh_low_steps, 0))));
     st.lowhigh_scale = Math.round(Math.max(0.25, Math.min(1, num(st.lowhigh_scale, 0.60))) * 1000) / 1000;
     st.lowhigh_denoise = Math.round(Math.max(0.10, Math.min(1, num(st.lowhigh_denoise, 0.65))) * 1000) / 1000;
     st.high_sigma_schedule = st.high_sigma_schedule === "karras7" ? "karras7" : "default";
-    st.continuation_method = ["protected", "overlap", "h3studio"].includes(st.continuation_method) ? st.continuation_method : "protected";
+    st.continuation_method = ["protected", "overlap", "h3studio"].includes(st.continuation_method) ? st.continuation_method : "h3studio";
     if (["protected", "h3studio"].includes(st.continuation_method)) st.lock_overlap = true;
     const ds = num(st.draft_scale, 0.5); st.draft_scale = DRAFT_SCALES.reduce((b, x) => (Math.abs(x - ds) < Math.abs(b - ds) ? x : b), DRAFT_SCALES[0]);
     st.draft_steps = Math.max(0, Math.min(200, Math.trunc(num(st.draft_steps, 0))));

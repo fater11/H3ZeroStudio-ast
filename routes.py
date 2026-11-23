@@ -111,6 +111,20 @@ def register():
         b = await request.json()
         return await _json_call(mdl.cancel, str(b.get("id") or ""), bool(b.get("discard")))
 
+    @routes.post("/h3lab/models/downloads/reveal")
+    async def models_dl_reveal(request):
+        """Open the installed file / its destination folder / models root in the OS file manager."""
+        from . import h3s_models_dl as mdl
+        b = await request.json()
+        return await _json_call(mdl.reveal, str(b.get("id") or ""))
+
+    @routes.post("/h3lab/models/downloads/remove")
+    async def models_dl_remove(request):
+        """Delete a downloaded model file (or its .part) and rescan the statuses."""
+        from . import h3s_models_dl as mdl
+        b = await request.json()
+        return await _json_call(mdl.remove, str(b.get("id") or ""))
+
     @routes.get("/h3lab/ui")
     async def ui_prefs_get(request):
         from . import h3s_models_dl as mdl
