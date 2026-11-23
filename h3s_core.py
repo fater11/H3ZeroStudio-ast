@@ -310,6 +310,14 @@ CARD_LOOK_PHRASE = {
     "voice": "Use {label} as a reference.",
 }
 CARD_VOICE_PHRASE = "{label} is {whose} voice timbre reference."
+# Character swap on footage: the source clip drives pose/camera/lighting, the character card is the appearance.
+# Adapted from the BFS H3 image-swap brief: an explicit "who changes / what is kept / what is transferred"
+# beats a bare reference line — the model replaces the person instead of just "considering" the picture.
+SWAP_BRIEF = ("character_swap: replace the person in the source video with {pics}: take the face, hair, skin tone, "
+              "body proportions and the complete outfit from {pics}; keep the source pose, hand positions, head "
+              "orientation, gaze, facial expression, camera movement, framing, lighting and shadows; keep the "
+              "background, the other people and the held objects exactly as in the source video; do not copy the "
+              "pose or the lighting of {pics}; do not retain the original person's identity or clothing.")
 CARD_SNAP_KEYS = ("name", "sig", "concept", "vkind", "audio", "tokens", "subject_name", "appearance", "retained_attributes", "voice_description")
 OVERRIDE_KEYS = ("seed", "refine_seed", "steps", "cfg", "denoise", "sampler", "scheduler", "sigmas", "shift_video", "shift_audio")
 # «custom SIGMAS» (a scheduler select item): the companion text field holds the exact schedule
@@ -1699,6 +1707,14 @@ def compose_prompt(project, index, video=True, identity_image_ids=()):
                                                  identity_image_ids=identity_image_ids), text)
     if cl:
         text = (text + "\n" if text else "") + "\n".join(cl)
+    # A swap on footage: name who changes and what is kept (the source clip drives pose/camera/lighting).
+    src_ = seg.get("source") or {}
+    if src_.get("swap") and not kfm and "character_swap" not in text.lower():
+        pics_used = sorted({n for r in card_labels(project, seg, index, video=video,
+                                                   identity_image_ids=identity_image_ids) for n in r["image"][:1]})
+        if pics_used:
+            text = (text + "\n" if text else "") + SWAP_BRIEF.replace(
+                "{pics}", ", ".join(f"<Picture {n}>" for n in pics_used))
     if not video:
         text = re.sub(r"[ \t]*<Video\s*\d+>", "", text)
         text = re.sub(r"[ \t]+\n", "\n", text).strip()

@@ -1122,6 +1122,12 @@ export function composePrompt(project, index) {
   if (na && !text.includes("<Audio")) text = (text ? text + "\n" : "") + AUDIO_REF_PHRASE.split("{tags}").join(Array.from({ length: na }, (_, j) => `<Audio ${j + 1}>`).join(", "));
   const cl = kfm ? [] : cardPhrases(cardLabels(project, seg, index), text);
   if (cl.length) text = (text ? text + "\n" : "") + cl.join("\n");
+  // A swap on footage: name who changes and what is kept (the source clip drives pose/camera/lighting).
+  const srcSwap = seg.source && seg.source.swap;
+  if (srcSwap && !kfm && !text.toLowerCase().includes("character_swap")) {
+    const used = [...new Set(cardLabels(project, seg, index).flatMap((r) => (r.image || []).slice(0, 1)))].sort((a, b) => a - b);
+    if (used.length) text = (text ? text + "\n" : "") + SWAP_BRIEF.split("{pics}").join(used.map((n) => `<Picture ${n}>`).join(", "));
+  }
   return text;
 }
 
@@ -1139,6 +1145,8 @@ const CARD_LOOK_PHRASE = {
   voice: "Use {label} as a reference.",
 };
 const CARD_VOICE_PHRASE = "{label} is {whose} voice timbre reference.";
+// Character swap on footage (mirror of h3s_core.SWAP_BRIEF): who changes, what is kept, what is transferred.
+const SWAP_BRIEF = "character_swap: replace the person in the source video with {pics}: take the face, hair, skin tone, body proportions and the complete outfit from {pics}; keep the source pose, hand positions, head orientation, gaze, facial expression, camera movement, framing, lighting and shadows; keep the background, the other people and the held objects exactly as in the source video; do not copy the pose or the lighting of {pics}; do not retain the original person's identity or clothing.";
 const CARD_SNAP_KEYS = ["name", "sig", "concept", "vkind", "audio", "tokens", "subject_name", "appearance", "retained_attributes", "voice_description"];
 export function normalizeCardRefs(v) {
   const out = [], seen = new Set();
