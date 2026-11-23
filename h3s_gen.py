@@ -1341,6 +1341,10 @@ def upscale_video_latent(vae, v, w, h, method="learned", frames=None, model=None
     if tuple(v.shape[-2:]) == (h // 16, w // 16):
         return v
     from . import h3s_upscale
+    chosen = h3s_upscale.picked_learned_model(model)
+    if "2d_conv" in (chosen or "").lower():
+        # A 2D upscale shifts the geometry a little; on a join with source footage that shows up.
+        vlog("  upscale: 2D-модель (LBH) слегка сдвигает геометрию — на стыке с исходным видеом лучше 3D")
     return h3s_upscale.upscale_input(vae, v, w, h, "learned", frames, model=model)[0]
 
 

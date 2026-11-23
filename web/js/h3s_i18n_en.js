@@ -3019,6 +3019,7 @@ export default {
   "Меняет интервалы тех же шагов High Res. Ускорение и улучшение качества не подтверждены; обычный режим рекомендуется.": "Changes the intervals of the same High Res steps. Speed-up and better quality are not confirmed; the normal mode is recommended.",
   "Модели доступны: {0}": "Models available: {0}",
   "Модель латентного апскейлера": "Latent upscaler model",
+  "2D-модель (LBH) чуть сдвигает геометрию: на стыке с исходным видеом лучше 3D — встроенная MiniMaxH3LatentUpscaleWithModel.": "The 2D model (LBH) shifts the geometry a little: on a join with source footage a 3D model is better — the built-in MiniMaxH3LatentUpscaleWithModel.",
   "Нажмите «Обновить», чтобы увидеть установленные текстовые энкодеры ComfyUI.": "Press “Refresh” to see the installed ComfyUI text encoders.",
   "Найдено: {0} из {1}": "Found: {0} of {1}",
   "Начальная σ": "Start σ",

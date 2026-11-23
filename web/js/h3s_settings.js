@@ -886,6 +886,7 @@ export function installSettings(Editor, { C, h, ICON }) {
             h("button", { type: "button", class: "h3l-btn sm", onclick: () => set("refine_seed", Math.floor(Math.random() * 2147483647)) }, T("🎲 Новый сид")),
             h("button", { type: "button", class: "h3l-btn sm", disabled: Number(g.refine_seed) < 0, onclick: () => set("refine_seed", -1) }, T("Как у черновика")))),
         this.field(T("Модель латентного апскейлера"), upscaleSel),
+        h("div", { class: "h3l-note" }, T("2D-модель (LBH) чуть сдвигает геометрию: на стыке с исходным видеом лучше 3D — встроенная MiniMaxH3LatentUpscaleWithModel.")),
         this.toggle(T("Эксперимент · фото персонажей во 2-м проходе"), !!g.refine_identity_images,
           (v) => set("refine_identity_images", v),
           T("Если карточка персонажа состоит из нескольких фотографий и голоса, первый снимок будет передан во второй проход как Picture вместо псевдовидео. Голос останется Audio. Оригинальный HiRes не меняется, пока переключатель выключен.")),
