@@ -179,19 +179,25 @@ def mask_preview(path, point, width, height, box=None, frame=0):
 
 
 def _hard_cut(previous, current):
-    """Conservative hard-cut detector at 24 fps; ordinary camera motion is ignored."""
+    """Hard-cut detector at 24 fps; ordinary camera motion is still ignored.
+
+    The thresholds are deliberately on the sensitive side: a *missed* cut is what
+    makes the swap mask slide (SAM3 keeps the old track and latches onto whoever
+    stands nearest in the new shot), while a false positive only costs one extra
+    re-seed on the same person.
+    """
     import cv2
     a = np.asarray(previous, dtype=np.uint8)
     b = np.asarray(current, dtype=np.uint8)
     change = float(np.abs(a.astype(np.int16) - b.astype(np.int16)).mean()) / 255
-    if change < .19:
+    if change < .14:
         return False
     ha = cv2.calcHist([a], [0, 1], None, [16, 16], [0, 256, 0, 256])
     hb = cv2.calcHist([b], [0, 1], None, [16, 16], [0, 256, 0, 256])
     ha /= max(1., float(ha.sum()))
     hb /= max(1., float(hb.sum()))
     histogram_change = float(np.abs(ha - hb).sum()) / 2
-    return change >= .38 or histogram_change >= .27
+    return change >= .28 or histogram_change >= .20
 
 
 def _find_shot_cuts(path, frames, stamp):
@@ -205,7 +211,7 @@ def _find_shot_cuts(path, frames, stamp):
         for j, frame in enumerate(batch):
             index = start + j
             current = _u8(frame)
-            if previous is not None and index - (cuts[-1] if cuts else 0) >= 12:
+            if previous is not None and index - (cuts[-1] if cuts else 0) >= 6:
                 if _hard_cut(previous, current):
                     cuts.append(index)
             previous = current
@@ -380,6 +386,30 @@ def prepare(path, point, count, w, h, project_dir, progress=None, box=None, anch
             if segment_masks.shape != (right - left, th, tw):
                 raise RuntimeError("Swap SAM 3.1: неверное число масок в плане")
             masks[left - start:right - start] = segment_masks
+            # ---- guard: re-anchor where the track left the person (missed cut) ----
+            jump = _restart_index(segment_masks) if len(segment_masks) > 1 else None
+            if jump:
+                absolute = left + jump
+                if absolute in cuts:
+                    pass                                    # already handled as a shot boundary
+                else:
+                    fresh = _auto_shot_seed(current_model, resized[absolute - offset], anchors, absolute)
+                    if fresh is not None and bool((fresh > .5).any()):
+                        tail = torch.from_numpy(resized[absolute - offset:right - offset])
+                        tracked_tail = SAM3_VideoTrack.execute(tail, current_model, initial_mask=fresh,
+                                                               max_objects=1, detect_interval=1)[0]
+                        fixed = SAM3_TrackToMask.execute(tracked_tail, object_indices="0")[0].float().cpu().numpy()
+                        if fixed.shape == (right - absolute, th, tw):
+                            segment_masks = np.concatenate((segment_masks[:jump], fixed), axis=0)
+                            masks[left - start:right - start] = segment_masks
+                            cuts.add(absolute)                  # the next chunk starts on this shot too
+                    else:
+                        # No unambiguous person on the new shot: keep the source frame
+                        # instead of pasting the old mask over a bystander.
+                        segment_masks = np.concatenate(
+                            (segment_masks[:jump], np.zeros((right - absolute, th, tw), dtype=np.float32)), axis=0)
+                        masks[left - start:right - start] = segment_masks
+                        cuts.add(absolute)
             last = segment_masks[-1:]
         _save_block(file, masks)
         if progress:
@@ -411,6 +441,31 @@ def _mask_identity_jump(previous, current):
     area_a = (ax2 - ax1) * (ay2 - ay1)
     area_b = (bx2 - bx1) * (by2 - by1)
     return intersection / max(1.e-6, area_a + area_b - intersection) < .05
+
+
+RESTART_MIN_EMPTY = 2   # a mask that disappears for this many frames is a lost track, not a blink
+
+
+def _restart_index(segment_masks):
+    """First frame of a segment where the tracked person is gone or has teleported.
+
+    A cut the frame detector did not see (dissolve, whip pan, a cut inside a fast
+    move) leaves SAM3 tracking the *previous* shot: the mask then drifts onto a
+    bystander or onto the background. This is the guard that stops it, measured on
+    the masks themselves instead of on the source frames.
+    """
+    previous, empty_run = None, 0
+    for index in range(len(segment_masks)):
+        box = _mask_geometry(segment_masks[index])
+        if box is None:
+            empty_run += 1
+            if previous is not None and empty_run >= RESTART_MIN_EMPTY:
+                return max(0, index - empty_run + 1)
+            continue
+        if _mask_identity_jump(previous, box):
+            return index
+        previous, empty_run = box, 0
+    return None
 
 
 def composite(path, src_in, generated, mask_config, project_dir, progress=None):
