@@ -319,8 +319,10 @@ def test_interface_themes(tmp_path):
     assert out["stored"] == out["restored"] == "ocean" and out["invalid"] == "lab"
     settings = pathlib.Path(JS, "h3s_settings.js").read_text(encoding="utf-8")
     css = pathlib.Path(JS, "h3s_style.js").read_text(encoding="utf-8")
-    # Lab (pro): settings window — «Общие» section holds language/theme/effects/blur/reset, scope sits on top of every section
-    assert "const general = [langRow, themeRow, fxRow, blurRow, resetBtn];" in settings and "applyTheme(theme.id, true)" in settings
+    # Lab (pro): settings live in their own window — «Общие» keeps language + reset, appearance gets
+    # workspace/theme/effects/blur; scope (project vs global) sits on top of every non-appearance section
+    assert "const general = [langRow, resetBtn];" in settings and "applyTheme(theme.id, true)" in settings
+    assert 'TABS.find((t) => t[0] === "appearance")[2].push(workspaceRow, themeRow, fxRow, blurRow);' in settings
     assert all(f':root[data-h3l-theme="{theme}"]' in css for theme in out["ids"] if theme not in ("neon", "lab"))   # Lab theme CSS lives in web/js/lab/fx_css.js
     # a fresh install (nothing saved) and «Вернуть настройки по умолчанию» use «Графит»
     assert 'export const DEFAULT_THEME = "lab";' in pathlib.Path(JS, "h3s_theme.js").read_text(encoding="utf-8")
@@ -361,7 +363,7 @@ def test_settings_reset_defaults_button(tmp_path):
     i18n in every dictionary; the reset follows the scope and keeps API keys / projects."""
     settings = pathlib.Path(JS, "h3s_settings.js").read_text(encoding="utf-8")
     css = pathlib.Path(JS, "h3s_style.js").read_text(encoding="utf-8")
-    assert "paneTitle, scope, ...(cur[0] === \"general\" ? general : cur[2])" in settings and "resetBtn]" in settings
+    assert 'paneTitle, cur[0] === "appearance" ? null : scope, ...(cur[0] === "general" ? general : cur[2])' in settings and "resetBtn]" in settings
     assert 'class: "h3l-btn sm danger h3l-setreset"' in settings and "onclick: () => this.askResetSettings()" in settings
     assert ".h3l-setbody > .h3l-setreset {" in css
     ask = settings[settings.index("    askResetSettings() {"):settings.index("    async resetSettings(")]

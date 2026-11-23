@@ -537,6 +537,8 @@ def _assist_cfg(rc):
             "unload_endpoint": str(rc.get("unload_endpoint") or "")[:500],
             "auto_unload": rc.get("auto_unload") is True,
             "auto_unload_delay": int(min(86400, max(0, _num(rc.get("auto_unload_delay"), 300)))),
+            "backend": "comfy" if rc.get("backend") == "comfy" else "api",
+            "comfy_encoder": str(rc.get("comfy_encoder") or "")[:200],
             "api_base": str(rc.get("api_base") or "http://127.0.0.1:1234/v1")[:300],
             "api_key": str(rc.get("api_key") or "")[:500],
             "api_model": str(rc.get("api_model") or "")[:200]}
@@ -926,39 +928,42 @@ def normalize_project(p):
     for k in ("sigmas", "draft_sigmas", "refine_sigmas"):
         st[k] = str(st.get(k) or "")[:SIGMAS_TEXT_MAX]
     st["settings_scope"] = "global" if st.get("settings_scope") == "global" else "project"
-    out["run"]["upto"] = int(_num((p.get("run") or {}).get("upto", -1) if isinstance(p.get("run"), dict) else -1, -1))
-    out["run"]["only"] = int(_num((p.get("run") or {}).get("only", -1) if isinstance(p.get("run"), dict) else -1, -1))
-    rk = (p.get("run") or {}).get("kind") if isinstance(p.get("run"), dict) else None
+    pr = p.get("run")
+    if not isinstance(pr, dict):
+        pr = {}
+    out["run"]["upto"] = int(_num(pr.get("upto", -1), -1))
+    out["run"]["only"] = int(_num(pr.get("only", -1), -1))
+    rk = pr.get("kind")
     out["run"]["kind"] = rk if rk in RUN_KINDS else ""
-    op = (p.get("run") or {}).get("operation") if isinstance(p.get("run"), dict) else None
+    op = pr.get("operation")
     if op in ("generate", "colour", "assemble", "full"):
         out["run"]["operation"] = op
-    if op == "full" and (p.get("run") or {}).get("export_full") is True:
+    if op == "full" and pr.get("export_full") is True:
         out["run"]["export_full"] = True  # explicit Save: never truncate via legacy resume-only
-    export_colour = (p.get("run") or {}).get("export_colour")
+    export_colour = pr.get("export_colour")
     if op in ("colour", "assemble", "full") and isinstance(export_colour, bool):
         out["run"]["export_colour"] = export_colour  # transient Save option; not a project setting
-    export_stream = (p.get("run") or {}).get("export_stream")
+    export_stream = pr.get("export_stream")
     if op in ("colour", "assemble", "full") and isinstance(export_stream, bool):
         out["run"]["export_stream"] = export_stream  # disk-backed assembly only at explicit Save
-    export_encoder = (p.get("run") or {}).get("export_encoder")
+    export_encoder = pr.get("export_encoder")
     if op in ("colour", "assemble", "full") and export_encoder in ("cpu", "nvenc"):
         out["run"]["export_encoder"] = export_encoder  # transient video encoder choice; never changes AV caches
-    export_concat = (p.get("run") or {}).get("export_concat")
+    export_concat = pr.get("export_concat")
     if op in ("colour", "assemble", "full") and isinstance(export_concat, bool):
         out["run"]["export_concat"] = export_concat  # independent, experimental stream-copy join choice
-    export_pipe = (p.get("run") or {}).get("export_pipe")
+    export_pipe = pr.get("export_pipe")
     if op in ("colour", "assemble", "full") and isinstance(export_pipe, bool):
         out["run"]["export_pipe"] = export_pipe  # experimental scene-by-scene FFmpeg export
-    rr = (p.get("run") or {}).get("region") if isinstance(p.get("run"), dict) else None
+    rr = pr.get("region")
     out["run"]["region"] = str(rr) if isinstance(rr, str) else ""
-    ct = (p.get("run") or {}).get("client_token") if isinstance(p.get("run"), dict) else None
+    ct = pr.get("client_token")
     if isinstance(ct, str) and ct.strip():
         out["run"]["client_token"] = ct.strip()[:80]
-    ra = (p.get("run") or {}).get("audio") if isinstance(p.get("run"), dict) else None
+    ra = pr.get("audio")
     if isinstance(ra, dict):   # «Улучшить звук»: audio-only refine pass over the cached segments
         out["run"]["audio"] = normalize_ar(ra)
-    rf = (p.get("run") or {}).get("face") if isinstance(p.get("run"), dict) else None
+    rf = pr.get("face")
     if isinstance(rf, dict) and _normalize_fr(rf):   # v6k «Рефайн лица»: a face pass over one finished clip
         out["run"]["face"] = _normalize_fr(rf)
     for i, r in enumerate(p.get("regions") or [] if isinstance(p.get("regions"), list) else []):

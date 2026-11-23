@@ -181,7 +181,7 @@ export function installSettings(Editor, { C, h, ICON }) {
       }
       this.toast(T("Режим генерации применён: {0}", mode === "full" ? T("1 этап") :
         mode === "stock" ? T("2 этапа · сток") : mode === "advanced" ? T("Независимые 2 прохода") :
-        mode === "pi2" ? "pi-H3 · 2 шага" : mode === "pi4" ? "pi-H3 · 4 шага" : "Low Res → High Res"));
+        mode === "pi2" ? T("pi-H3 · 2 шага") : mode === "pi4" ? T("pi-H3 · 4 шага") : "Low Res → High Res"));
       this.refreshGenerationPresetPanel();
     },
     /** Prefer the proven 3D backend for recipes. 2D stays manually selectable until GPU validation. */
@@ -730,7 +730,7 @@ export function installSettings(Editor, { C, h, ICON }) {
       const confirmGenMode = () => pendingGenMode ? h("div", { class: "h3l-row wrap" },
         h("span", { class: "h3l-note warn" },
           T("Выбран режим «{0}». Нажмите «Применить», чтобы изменить метод генерации.",
-            pendingGenMode === "full" ? T("1 этап") : pendingGenMode === "stock" ? T("2 этапа · сток") : pendingGenMode === "advanced" ? T("Независимые 2 прохода") : pendingGenMode === "pi2" ? "pi-H3 · 2 шага" : pendingGenMode === "pi4" ? "pi-H3 · 4 шага" : "Low Res → High Res")),
+            pendingGenMode === "full" ? T("1 этап") : pendingGenMode === "stock" ? T("2 этапа · сток") : pendingGenMode === "advanced" ? T("Независимые 2 прохода") : pendingGenMode === "pi2" ? T("pi-H3 · 2 шага") : pendingGenMode === "pi4" ? T("pi-H3 · 4 шага") : "Low Res → High Res")),
         h("button", { type: "button", class: "h3l-btn sm", onclick: () => this.cancelGenerationMode() }, T("Отмена")),
         h("button", { type: "button", class: "h3l-btn primary sm", onclick: () => this.applyGenerationMode() }, T("Применить"))) : null;
       const lowhighSplit = h("select", { class: "h3l-sel" },
@@ -746,8 +746,8 @@ export function installSettings(Editor, { C, h, ICON }) {
           pill(displayedGenMode === "stock", T("2 этапа · сток"), T("Оригинальный HiRes с абсолютной σ; параметры этапа 1 общие с черновиком"), () => this.chooseGenerationMode("stock")),
           pill(displayedGenMode === "advanced", T("Независимые 2 прохода"), T("Независимый рефайнер с BasicScheduler и отдельным сэмплером"), () => this.chooseGenerationMode("advanced")),
           pill(displayedGenMode === "luna", "Low Res → High Res", T("Один запуск с настраиваемым разделением шагов и обученным латентным апскейлером"), () => this.chooseGenerationMode("luna")),
-          pill(displayedGenMode === "pi2", "π pi-H3 · 2 шага", T("Эксперимент · только pruned-модель · адаптер DWD"), () => this.chooseGenerationMode("pi2")),
-          pill(displayedGenMode === "pi4", "π pi-H3 · 4 шага", T("Эксперимент · только pruned-модель · адаптер DWD"), () => this.chooseGenerationMode("pi4"))),
+          pill(displayedGenMode === "pi2", T("π pi-H3 · 2 шага"), T("Эксперимент · только pruned-модель · адаптер DWD"), () => this.chooseGenerationMode("pi2")),
+          pill(displayedGenMode === "pi4", T("π pi-H3 · 4 шага"), T("Эксперимент · только pruned-модель · адаптер DWD"), () => this.chooseGenerationMode("pi4"))),
         confirmGenMode(),
         h("div", { class: "h3l-note" }, uiPi ? T("pi-H3: одноэтапная генерация, {0} шага(ов), Euler, CFG 1 и расписание pi-Flow задаются автоматически.", displayedGenMode === "pi2" ? 2 : 4)
           : uiLuna ? T("Low Res: {0} шаг(ов), High Res: {1} шаг(ов). Масштаб — доля конечной ширины и высоты; High Res denoise управляет начальной σ второго прохода. Внешние SIGMAS не используются.", lowhighLow, lowhighTotal - lowhighLow)
