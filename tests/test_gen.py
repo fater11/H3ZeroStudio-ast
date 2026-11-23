@@ -293,6 +293,23 @@ def test_the_noise_field_is_one_for_the_film_and_a_own_seed_starts_a_new_one():
     assert core.noise_seed_for(p, 0, "full") == 4242
 
 
+def test_video_ramp_releases_the_end_of_the_overlap_gradually():
+    """The video ramp loosens the lock at the end of the overlap (0 = the hard lock as before)."""
+    hard = gen.video_lock_weights(12, 7, 0)
+    assert hard[:7].tolist() == [1.0] * 7 and hard[7:].tolist() == [0.0] * 5
+    ramp = gen.video_lock_weights(12, 7, 3)
+    assert ramp[:4].tolist() == [1.0] * 4, "the head of the overlap stays locked"
+    assert ramp[4] > ramp[5] > ramp[6], "the lock is released gradually"
+    assert ramp[4] > 0.8 and ramp[6] < 0.2
+    assert (1.0 - ramp)[4:].tolist() != (1.0 - hard)[4:].tolist(), "the sampler sees a different denoise mask"
+    # the ramp is part of the cache key: a different ramp must resample
+    p = core.normalize_project(project(id="ramp"))
+    p["settings"]["video_ramp_frames"] = 12
+    with_ramp = core.segment_keys(p)
+    p["settings"]["video_ramp_frames"] = 0
+    assert core.segment_keys(p) != with_ramp
+
+
 def test_cut_segment_has_no_continuity(patcher, dirs):
     p = project(id="t2")
     p["segments"][1]["link"] = "cut"

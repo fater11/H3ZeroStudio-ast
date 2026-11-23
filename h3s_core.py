@@ -94,6 +94,7 @@ DEFAULT_SETTINGS = {
     "piflow_steps": 0,        # 0 = normal H3; 2/4 = LakonLab pi-H3 DWD (pruned base only)
     "piflow_lora2": "",        # the DWD adapter for the 2-step schedule ("" = the built-in file in models/loras)
     "piflow_lora4": "",        # the DWD adapter for the 4-step schedule ("" = the built-in file in models/loras)
+    "video_ramp_frames": 0,    # experimental: pixel frames at the end of the locked overlap that get re-noised (0 = off)
     "draft_scale": 0.5,        # linear size of the draft (0.5 = a quarter of the pixels)
     "lowhigh_low_steps": 0,    # Low/High: 0 = 2/3 of total steps automatically
     "lowhigh_scale": 0.60,     # Low Res linear fraction of the final width and height
@@ -873,6 +874,7 @@ def normalize_project(p):
     st["piflow_steps"] = int(_num(st.get("piflow_steps"), 0)) if int(_num(st.get("piflow_steps"), 0)) in (2, 4) and st["final_mode"] == "full" else 0
     st["piflow_lora2"] = str(st.get("piflow_lora2") or "").strip()[:200]
     st["piflow_lora4"] = str(st.get("piflow_lora4") or "").strip()[:200]
+    st["video_ramp_frames"] = max(0, min(24, int(_num(st.get("video_ramp_frames"), 0))))
     # one-off: the former single field became the binding of the step count it was picked for
     legacy_lora = str(st.get("piflow_lora") or "").strip()[:200]
     if legacy_lora:
@@ -2279,6 +2281,7 @@ def segment_keys(project, ref_sigs=None, env_sig="", kind=None, up_env="", parts
             "params": pass_params(project, i, kind), **({"piflow_env": s.get("_piflow_env")} if s.get("piflow_steps") else {}), "luna_two_resolution": "high_denoise_065_v1" if s.get("final_mode") == "luna" and kind == "full" else False, "luna_upscale": s.get("_luna_upscale_env") if s.get("final_mode") == "luna" else None, "pass2": s.get("_pass2_external") if s.get("final_mode") == "luna" and kind == "full" else None, "lock": bool(s.get("lock_overlap", True)),
             "cref": continuity_picture(project, i), "ref_size": s.get("ref_size"),
             **({"handover": "protected_v1" if s.get("continuation_method") == "protected" else "h3studio_lab_tone_bridge_v3"} if s.get("continuation_method") in ("protected", "h3studio") and it["link"] == "extend" and i > 0 and it["overlap"] else {}),
+            **({"vramp": int(s.get("video_ramp_frames") or 0)} if it["link"] == "extend" and i > 0 and it["overlap"] and int(s.get("video_ramp_frames") or 0) else {}),
             "audio": [[c + [ref_sigs.get(c[0], "")] for c in segment_track(project, it)],
                       [[a["id"], ref_sigs.get(a["id"], "")] for a in audio_refs(project, seg)][:MAX_REF_AUDIOS]]
             if segment_track(project, it) or audio_refs(project, seg) else None,

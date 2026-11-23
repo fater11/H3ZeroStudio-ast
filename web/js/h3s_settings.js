@@ -944,6 +944,14 @@ export function installSettings(Editor, { C, h, ICON }) {
           pill(g.continuation_method === "overlap", "overlap", T("Оригинальный"), () => set("continuation_method", "overlap")))),
         h("div", { class: "h3l-note" }, T("Studio выбран по умолчанию: на реальном стыке с человеком шаг люмы ×0.8–1.1 и дрейф тона вдвое меньше, чем у PROTECTED. PROTECTED и Оригинальный оставлены для старых проектов.")),
         this.toggle(T("Фиксировать перекрытие"), g.lock_overlap, (v) => set("lock_overlap", v), T("Кадры перекрытия берутся из готового предыдущего отрезка")),
+        this.field(T("Видеорампа перехода (эксперимент)"), (() => {
+          const sel = h("select", { class: "h3l-sel", title: T("Конец зафиксированного перекрытия постепенно размораживается: модель может пересобрать переход вместо жёсткой склейки") },
+            [0, 4, 8, 12, 16, 20].map((v) => h("option", { value: v, selected: Number(g.video_ramp_frames || 0) === v },
+              v ? T("{0} кадр. перекрытия размораживается", v) : T("выкл · жёсткое перекрытие"))));
+          sel.onchange = () => set("video_ramp_frames", Number(sel.value));
+          return sel;
+        })()),
+        h("div", { class: "h3l-note" }, T("Рампа ослабляет фиксацию конца перекрытия: стык может стать мягче, но есть риск артефакта на шве — проверяйте на своём материале. 0 = как раньше.")),
         ...(g.continuation_method !== "overlap" ? [] : [this.toggle(T("Последний кадр как <Picture N>"), g.continuity_ref, (v) => set("continuity_ref", v), T("Последний кадр предыдущего отрезка — референс"))]),
         h("div", null, h("div", { class: "h3l-lbl" }, T("Фраза-продолжение"), h("em", null, T("{n} — номер картинки")),
           this.peButton(() => ({ title: T("Фраза-продолжение (последний кадр прошлого отрезка)"), value: this.p.settings.continuity_phrase ?? "", ctx: { kind: "phrase" }, apply: (t) => { phrase.value = t; set("continuity_phrase", t); } }))), phrase),

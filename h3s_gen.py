@@ -1467,8 +1467,12 @@ def sample_segment(model, clip, vae, project, index, items, prev, ref_images, au
             keyframes.append({"resolved_frame_index": 0, "latent": tail_v.clone()})
         if not hidden_handover and s.get("lock_overlap", True):
             lock_v = video.clone()
-            w_v = torch.zeros(T)
-            w_v[:ov_t] = 1.0
+            ramp_px = int(s.get("video_ramp_frames") or 0)
+            ramp_t = max(0, min(ov_t, round(ramp_px / 4))) if ramp_px else 0
+            w_v = video_lock_weights(T, ov_t, ramp_t)
+            if ramp_t:
+                vlog(f"  video ramp: the last {ramp_t} latent frame(s) of the overlap are released "
+                     f"gradually ({ramp_px} px)")
         # audio: the new segment continues the previous sound (own switch, independent of the video lock)
         if a_ov and core.audio_lock_overlap(project) and refine is None:
             s0 = pa.shape[-1] - a_ov                       # audio frame of prev where the overlap starts
@@ -2580,6 +2584,24 @@ def piflow_adapter_name(settings, steps):
     n = 4 if int(steps) == 4 else 2
     return (str((settings or {}).get(f"piflow_lora{n}") or "").strip()
             or f"pi_h3_{n}step_dwd_adapter_int8_convrot.safetensors")
+
+
+def video_lock_weights(total, overlap_latent, ramp_latent=0):
+    """Per-latent-step lock weight of the video arm: 1 = take the finished latent, 0 = sample freely.
+
+    The overlap is normally locked hard (1) and everything after it is free (0). With a ramp the last
+    `ramp_latent` steps of the overlap are released gradually (smootherstep 1 → 0): the model may
+    re-synthesize the transition instead of butting the frozen tail against the new frames. The sampler
+    gets the complement as its denoise mask, so the same weights drive both paths.
+    """
+    w = torch.zeros(int(total), dtype=torch.float32)
+    ov = max(0, min(int(overlap_latent), int(total)))
+    w[:ov] = 1.0
+    k = max(0, min(int(ramp_latent), ov))
+    for i in range(k):
+        t = (i + 1) / (k + 1)
+        w[ov - k + i] = 1.0 - (t * t * (3.0 - 2.0 * t))
+    return w
 
 
 def run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=None, preview_factory=None, sampler=None, model_pass2=None, sampler_pass2=None, global_seed=-1, stream_output=False):
