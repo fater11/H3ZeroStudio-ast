@@ -58,11 +58,51 @@ def _scaled_size(w, h, side=TRACK_SIDE):
     return max(32, round(w * scale / 32) * 32), max(32, round(h * scale / 32) * 32)
 
 
-def _seed(model, first, point, box=None):
-    """Select the whole person by the YOLO person box, falling back to a click.
+def _person_mask(first, point):
+    """YOLO-seg reference: the *whole* person under the click (None if the model is absent).
 
-    A positive point alone can select a jacket or a face instead of the person.
-    The box is the detected *person* box selected by that click in the editor.
+    SAM with a box prompt happily returns a part (a forehead, a hand) on big close-ups; the
+    YOLO person segmentation is coarser but it is always the person, so it can veto a fragment.
+    """
+    try:
+        import folder_paths
+        checkpoint = os.path.join(folder_paths.models_dir, *YOLO_RELATIVE)
+        if not os.path.isfile(checkpoint):
+            return None
+        found = _person_detector(checkpoint).predict(_u8(first), device="cpu", imgsz=640, conf=.25,
+                                                    max_det=12, verbose=False)[0]
+        if found.masks is None or found.boxes is None:
+            return None
+        h, w = first.shape[:2]
+        x, y = float(point[0]) * w, float(point[1]) * h
+        xi = int(min(w - 1, max(0, x)))
+        yi = int(min(h - 1, max(0, y)))
+        best = None
+        for m, cls in zip(found.masks.data.cpu().numpy(), found.boxes.cls.cpu().numpy()):
+            if int(cls) != 0:
+                continue
+            mm = m > .5
+            if mm.shape != (h, w):
+                import cv2
+                mm = cv2.resize(mm.astype("uint8"), (w, h), interpolation=cv2.INTER_NEAREST) > .5
+            if not mm[yi, xi]:
+                continue
+            area = float(mm.mean())
+            if not 0.01 <= area <= .97:
+                continue
+            if best is None or area > float(best.mean()):   # the figure under the click
+                best = mm
+        return None if best is None else best.astype(np.float32)
+    except Exception:
+        return None
+
+
+def _seed(model, first, point, box=None):
+    """Select the whole person by the YOLO person box and the click, falling back to a click.
+
+    A positive point alone can select a jacket or a face instead of the person, while a box alone
+    can return a fragment on a big close-up — so both prompts are sent together, and the result is
+    checked against the YOLO person segmentation (a fragment is replaced by the whole person).
     """
     import torch
     from comfy_extras.nodes_sam3 import SAM3_Detect
@@ -79,15 +119,24 @@ def _seed(model, first, point, box=None):
                 x1, y1 = max(0, bx), max(0, by)
                 x2, y2 = min(1, bx + bw), min(1, by + bh)
                 if x2 > x1 and y2 > y1:
-                    kwargs = {"bboxes": {"x": round(x1 * w), "y": round(y1 * h),
-                                        "width": max(1, round((x2 - x1) * w)),
-                                        "height": max(1, round((y2 - y1) * h))}}
+                    # the box *and* the click: the click anchors the object, the box bounds it
+                    kwargs = {"positive_coords": coord,
+                              "bboxes": {"x": round(x1 * w), "y": round(y1 * h),
+                                         "width": max(1, round((x2 - x1) * w)),
+                                         "height": max(1, round((y2 - y1) * h))}}
                     area = (x2 - x1) * (y2 - y1)
         except (TypeError, ValueError):
             pass
     mask = SAM3_Detect.execute(model, torch.from_numpy(first[None]).float(),
                                refine_iterations=2, **kwargs)[0].float().cpu()
     coverage = float((mask > .5).float().mean())
+    person = _person_mask(first, point)
+    if person is not None:
+        ref = torch.from_numpy(person).to(mask.device)
+        covered = float(((mask[0] > .5) & (ref > .5)).sum()) / max(1.0, float((ref > .5).sum()))
+        if covered < .45:
+            # SAM grabbed a part of the figure (a face, a hand): keep the whole person instead
+            return ref[None]
     if not 0.002 <= coverage <= 0.85:
         raise ValueError("SAM 3.1 не смог выделить выбранного человека. Попробуйте другой кадр или отключите маску.")
     if area is not None and coverage < area * .16:
