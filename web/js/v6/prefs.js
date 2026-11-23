@@ -245,9 +245,6 @@ export function installPrefs(Studio, { C, h }) {
       box.append(h("div", { class: "v6-about" }, h("div", { class: "v6-about-mark" }, monogram(40)), h("div", null, h("h2", { class: "v6-wordm" }, h("b", null, "H3"), "ZeroStudio"), h("p", null, T("Таймлайн-студия для MiniMax H3 в ComfyUI")), h("small", { class: "v6-muted" }, T("Экспериментальный интерфейс Lab")))));
       box.append(group(T("Сообщество"), [
         row({ icon: I.github, label: "GitHub", sub: T("Исходный код, обновления, вопросы"), control: link("https://github.com/zeroleloushe/H3ZeroStudio", I.share, T("Открыть")) }),
-        row({ icon: I.telegram, label: T("Группа в Telegram"), sub: T("Новости и помощь"), control: link("https://t.me/+Jh-mDY5nwOIyMTFi", I.share, T("Открыть")) }),
-        row({ icon: I.youtube, label: "YouTube", sub: T("Видео-уроки"), control: link("https://www.youtube.com/@zeroleloushe", I.share, T("Открыть")) }),
-        row({ icon: I.heart, label: "Boosty", sub: T("Поддержать разработку"), control: link("https://boosty.to/zeroleloushe", I.share, T("Открыть")) }),
       ]));
       const est = C.estimate(this.p);
       box.append(group(T("Как это работает"), [

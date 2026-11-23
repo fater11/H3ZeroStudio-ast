@@ -187,7 +187,7 @@ ${L} .h3l-panel.h3l-short .h3l-ast-compose .h3l-ast-input { max-height:88px !imp
 ${L} .h3l-panel.h3l-tiny .h3l-ast-compose .h3l-ast-input { max-height:52px !important; min-height:36px !important; }
 ${L} .h3l-panel.h3l-tiny .h3l-ast-compose { gap:4px !important; padding:6px !important; }
 ${L} .h3l-panel.h3l-tiny .h3l-ast-panel > .h3l-scroll { min-height:24px; }
-/* welcome: project links — GitHub neutral steel, Telegram muted blue */
+/* welcome: project links — GitHub neutral steel */
 ${L} .h3l-fx-welcome .h3l-welcome-links { padding:4px 24px 20px; gap:8px; }
 ${L} .h3l-fx-welcome .h3l-linkbtn { height:38px; border-radius:10px; font-size:13px; color:#e6e9ee; 
   transition:translate .35s var(--h3l-sp-snappy,cubic-bezier(.2,.8,.2,1)), scale .12s, border-color .2s, box-shadow .25s, background .2s; }

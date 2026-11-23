@@ -899,13 +899,17 @@ def test_models_tab_uses_single_panel_background():
 
 
 def test_author_links_open_in_new_tabs_above_help():
+    """Only the GitHub repository stays as an external link — no Telegram, no Boosty, no YouTube."""
     editor = pathlib.Path(JS, "h3s_editor.js").read_text(encoding="utf-8")
     style = pathlib.Path(JS, "h3s_style.js").read_text(encoding="utf-8")
-    for url in ("https://boosty.to/zeroleloushe", "https://github.com/zeroleloushe/H3ZeroStudio", "https://www.youtube.com/@zeroleloushe"):
-        assert url in editor
-    # Lab (pro): the rail keeps only a muted Boosty above Help; GitHub / YouTube / Telegram moved into «Инфо»
-    assert editor.count('target: "_blank", rel: "noopener noreferrer"') >= 2
-    assert editor.index('class: "h3l-support"') < editor.index('tool("help"')
+    assert "https://github.com/zeroleloushe/H3ZeroStudio" in editor
+    for gone in ("https://boosty.to/zeroleloushe", "https://t.me/+Jh-mDY5nwOIyMTFi",
+                 "https://www.youtube.com/@zeroleloushe"):
+        assert gone not in editor, gone
+        for f in ("h3s_settings.js", "v6/prefs.js", "v6/extras.js"):
+            assert gone not in pathlib.Path(JS, f).read_text(encoding="utf-8"), (gone, f)
+    # Lab (pro): the rail keeps no external links; the repository lives in «Инфо»
+    assert editor.count('target: "_blank", rel: "noopener noreferrer"') >= 1
     assert 'class: "h3l-about-links"' in editor
     assert '.h3l-social-link:focus-visible, .h3l-support:focus-visible' in style
 

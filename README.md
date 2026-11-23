@@ -14,17 +14,10 @@
 [![Plain JS](https://img.shields.io/badge/UI-plain%20JS%20·%20offline-f7df1e.svg)](#)
 [![Tests](https://img.shields.io/badge/tests-78%20passed-2ea44f.svg)](#-тесты)
 
-[Возможности](#-возможности) · [Установка](#-установка) · [Модели](#-модели) · [Как пользоваться](#-как-пользоваться) · [Горячие клавиши](#-горячие-клавиши) · [FAQ](#-faq) · [English](#-english) · [Благодарности](#-благодарности-и-лицензии) · [Поддержать](#-поддержать-проект)
+[Возможности](#-возможности) · [Установка](#-установка) · [Модели](#-модели) · [Как пользоваться](#-как-пользоваться) · [Горячие клавиши](#-горячие-клавиши) · [FAQ](#-faq) · [English](#-english) · [Благодарности](#-благодарности-и-лицензии)
 
-💛 Проект бесплатный и открытый. Если он вам пригодился и хочется поддержать разработку, это можно сделать на [Boosty](https://boosty.to/zeroleloushe). Платных функций и подписок для доступа к ноде нет.
-
-### 💬 Telegram Community / Telegram-сообщество
-
-🇬🇧 **For node discussions, feature requests, suggestions, and questions, join our Telegram group:**
-
-🇷🇺 **Для обсуждения ноды, пожеланий, предложений и вопросов присоединяйтесь к нашей группе в Telegram:**
-
-[![Telegram](https://img.shields.io/badge/Telegram-H3ZeroStudio-26A5E4?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/+Jh-mDY5nwOIyMTFi)
+Проект бесплатный и открытый (GPL-3.0). Платных функций и подписок для доступа к ноде нет.
+Исходный код и обсуждения — на [GitHub](https://github.com/zeroleloushe/H3ZeroStudio).
 
 <a href="docs/promo.mp4"><img src="docs/images/promo.gif" alt="H3ZeroStudio: обзор функций за 53 секунды" width="100%"></a>
 
@@ -427,17 +420,7 @@ The interface is available in Russian, English, Thai (ไทย) and Simplified 
 
 **Thanks:** AV latent persistence, Repeat-from-meta, smarter Veda fallbacks, the VRAM arbiter and progress re-attach after reload — ideas cheerfully borrowed from the best app and developer in the world, [MiniMax H3 Studio](https://github.com/EvgenRublev/Minimax_Studio) by EvgenRublev 😉 (GPL-3.0); our own code.
 
-**Support:** H3ZeroStudio is free and open source (GPL-3.0). If you find it useful and want to support development, you can do so on [Boosty](https://boosty.to/zeroleloushe). Entirely optional; there are no paid features.
-
----
-
-## 💛 Поддержать проект
-
-H3ZeroStudio бесплатный, с открытым кодом (GPL-3.0), и таким останется. Все функции доступны без подписок и платных услуг.
-
-Если нода экономит вам время и хочется сказать спасибо, можно поддержать разработку на Boosty. Это полностью добровольно и ни на что не влияет: ни на доступ к коду, ни на поддержку в Issues.
-
-👉 **[boosty.to/zeroleloushe](https://boosty.to/zeroleloushe)**
+**Support:** H3ZeroStudio is free and open source (GPL-3.0). There are no paid features and no subscriptions.
 
 ---
 

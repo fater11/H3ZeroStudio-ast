@@ -27,7 +27,7 @@ export function installExtras(Studio, { C, h }) {
           [[I.edit, T("Монтаж"), T("Отрезки на таймлайне, инспектор и плеер")], [I.library, T("Медиатека"), T("Референсы, персонажи, галерея и проекты")], [I.assist, T("Ассистент"), T("Пишет и улучшает промпты")]]
             .map(([ic, t, s]) => h("div", { class: "v6-wf" }, h("i", { class: "v6-ic", html: ic }), h("b", null, t), h("span", null, s)))),
         status,
-        h("div", { class: "v6-wlinks" }, link("https://github.com/zeroleloushe/H3ZeroStudio", I.github, "GitHub", T("Репозиторий (новая вкладка)")), link("https://t.me/+Jh-mDY5nwOIyMTFi", I.telegram, T("Группа в Telegram"), T("Новая вкладка"))),
+        h("div", { class: "v6-wlinks" }, link("https://github.com/zeroleloushe/H3ZeroStudio", I.github, "GitHub", T("Репозиторий (новая вкладка)"))),
         h("div", { class: "v6-wfoot" }, h("label", { class: "v6-chk" }, never, h("i", { class: "v6-chk-b", html: I.check }), h("span", null, T("Больше не показывать"))), h("i", { class: "v6-grow" }),
           btn({ label: T("Начать"), kind: ok || unknown ? "primary" : "", onclick: () => close() })));
       const m = modal(this.root, box, { cls: "v6-wwin", label: T("Добро пожаловать"), onClose: () => { if (this.$.welcomeModal === m) this.$.welcomeModal = null; } });
