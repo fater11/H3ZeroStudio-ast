@@ -145,7 +145,7 @@ export function installSettings(Editor, { C, h, ICON }) {
       return choice?.project === this.p.id ? choice.mode : null;
     },
     chooseGenerationMode(mode) {
-      if (!["full", "stock", "advanced", "luna", "pi2", "pi4"].includes(mode)) return;
+      if (!["full", "two", "luna", "pi2", "pi4"].includes(mode)) return;
       this._pendingGenerationMode = { project: this.p.id, mode };
       this.refreshGenerationPresetPanel();
     },
@@ -164,15 +164,13 @@ export function installSettings(Editor, { C, h, ICON }) {
           final_mode: "full", quality: "final", piflow_steps: n, steps: n,
           cfg: 1, denoise: 1, sampler: "euler", scheduler: "simple", sigmas: "",
         }); });
-      } else if (mode === "stock") {
+      } else if (mode === "two") {
         this.mutate((p) => { p.settings.settings_scope = "project"; Object.assign(p.settings, {
           final_mode: "refine", quality: "final", piflow_steps: 0,
-          refine_schedule_mode: "sigma", refine_identity_images: false, refine_seed: -1,
+          // the second pass keeps the user's own schedule choice (absolute σ or BasicScheduler)
+          refine_schedule_mode: p.settings.refine_schedule_mode === "basic" ? "basic" : "sigma",
+          refine_identity_images: false, refine_seed: -1,
           upscale_method: "learned", upscale_model: "",
-        }); });
-      } else if (mode === "advanced") {
-        this.mutate((p) => { p.settings.settings_scope = "project"; Object.assign(p.settings, {
-          final_mode: "refine", quality: "final", piflow_steps: 0, refine_schedule_mode: "basic",
         }); });
       } else {
         // Normal one-stage / LowHigh stays compatible with shared global settings.
@@ -180,8 +178,7 @@ export function installSettings(Editor, { C, h, ICON }) {
         this.setOnce("final_mode", mode);
       }
       this.toast(T("Режим генерации применён: {0}", mode === "full" ? T("1 этап") :
-        mode === "stock" ? T("2 этапа · сток") : mode === "advanced" ? T("Независимые 2 прохода") :
-        mode === "pi2" ? T("pi-H3 · 2 шага") : mode === "pi4" ? T("pi-H3 · 4 шага") : "Low Res → High Res"));
+        mode === "two" ? T("2 этапа") : mode === "pi2" ? T("pi-H3 · 2 шага") : mode === "pi4" ? T("pi-H3 · 4 шага") : "Low Res → High Res"));
       this.refreshGenerationPresetPanel();
     },
     /** pi-H3: the step switch inside the merged DWD mode (pi-Flow schedule, Euler, CFG 1). */
@@ -767,16 +764,15 @@ export function installSettings(Editor, { C, h, ICON }) {
       const lowhighRequested = Math.trunc(Number(g.lowhigh_low_steps) || 0);
       const lowhighAuto = Math.max(1, Math.min(lowhighTotal - 1, Math.floor(lowhighTotal * 2 / 3 + 0.5)));
       const pendingGenMode = this.pendingGenerationMode();
-      const activeGenMode = g.piflow_steps === 2 && g.final_mode === "full" ? "pi2" : g.piflow_steps === 4 && g.final_mode === "full" ? "pi4" : g.final_mode === "full" ? "full" : g.final_mode === "luna" ? "luna"
-        : two && g.refine_schedule_mode !== "basic" && !g.refine_identity_images ? "stock" : "advanced";
+      const activeGenMode = g.piflow_steps === 2 && g.final_mode === "full" ? "pi2" : g.piflow_steps === 4 && g.final_mode === "full" ? "pi4" : g.final_mode === "full" ? "full" : g.final_mode === "luna" ? "luna" : "two";
       const displayedGenMode = pendingGenMode || activeGenMode;
       const uiPi = displayedGenMode === "pi2" || displayedGenMode === "pi4";
       const uiLuna = displayedGenMode === "luna";
-      const uiTwo = displayedGenMode === "stock" || displayedGenMode === "advanced";
+      const uiTwo = displayedGenMode === "two";
       const confirmGenMode = () => pendingGenMode ? h("div", { class: "h3l-row wrap" },
         h("span", { class: "h3l-note warn" },
           T("Выбран режим «{0}». Нажмите «Применить», чтобы изменить метод генерации.",
-            pendingGenMode === "full" ? T("1 этап") : pendingGenMode === "stock" ? T("2 этапа · сток") : pendingGenMode === "advanced" ? T("Независимые 2 прохода") : pendingGenMode === "pi2" ? T("pi-H3 · 2 шага") : pendingGenMode === "pi4" ? T("pi-H3 · 4 шага") : "Low Res → High Res")),
+            pendingGenMode === "full" ? T("1 этап") : pendingGenMode === "two" ? T("2 этапа") : pendingGenMode === "pi2" ? T("pi-H3 · 2 шага") : pendingGenMode === "pi4" ? T("pi-H3 · 4 шага") : "Low Res → High Res")),
         h("button", { type: "button", class: "h3l-btn sm", onclick: () => this.cancelGenerationMode() }, T("Отмена")),
         h("button", { type: "button", class: "h3l-btn primary sm", onclick: () => this.applyGenerationMode() }, T("Применить"))) : null;
       const lowhighSplit = h("select", { class: "h3l-sel" },
@@ -789,8 +785,7 @@ export function installSettings(Editor, { C, h, ICON }) {
       const stages = det(T("Генерация"),
         h("div", { class: "h3l-pills" },
           pill(displayedGenMode === "full", T("1 этап"), T("«Сгенерировать» сразу делает {0}×{1}", w, hh), () => this.chooseGenerationMode("full")),
-          pill(displayedGenMode === "stock", T("2 этапа · сток"), T("Оригинальный HiRes с абсолютной σ; параметры этапа 1 общие с черновиком"), () => this.chooseGenerationMode("stock")),
-          pill(displayedGenMode === "advanced", T("Независимые 2 прохода"), T("Независимый рефайнер с BasicScheduler и отдельным сэмплером"), () => this.chooseGenerationMode("advanced")),
+          pill(displayedGenMode === "two", T("2 этапа"), T("Черновик {0}×{1} → латентный апскейл и доработка до {2}×{3}; второй проход настраивается ниже", dw, dh, w, hh), () => this.chooseGenerationMode("two")),
           pill(displayedGenMode === "luna", "Low Res → High Res", T("Один запуск с настраиваемым разделением шагов и обученным латентным апскейлером"), () => this.chooseGenerationMode("luna")),
           pill(uiPi, T("π pi-H3 · DWD"), T("Эксперимент · только pruned-модель · адаптер DWD, шаги и файл ниже"), () => { if (!uiPi) this.chooseGenerationMode("pi2"); })),
         confirmGenMode(),
@@ -891,8 +886,8 @@ export function installSettings(Editor, { C, h, ICON }) {
           ? h("div", { class: "h3l-note warn" }, T("Важно: Denoise 0,30 — доля расписания, НЕ σ 0,30. Из-за H3 shift фактическая стартовая σ может быть значительно выше; точное значение появится в логе перед генерацией."))
           : null);
       // Stock and independent HiRes now share the controls above; no duplicate forms or sidebar tabs.
-      const hiresAdvanced = det(T("Независимые 2 прохода · параметры и профили"),
-        h("div", { class: "h3l-note" }, T("Независимые два прохода: готовый черновик → обученный латентный 3D-апскейл → новая доработка видео. Сэмплер, расписание, шаги и CFG настраиваются отдельно для каждого прохода ниже.")),
+      const hiresAdvanced = det(T("2 этапа · параметры и профили"),
+        h("div", { class: "h3l-note" }, T("2 этапа: готовый черновик → обученный латентный 3D-апскейл → новая доработка видео. Сэмплер, расписание, шаги и CFG настраиваются отдельно для каждого прохода ниже.")),
         h("div", { class: "h3l-row wrap" },
           h("button", { type: "button", class: "h3l-btn primary sm",
             title: T("Применить проверенный профиль №1: 8+3 шага, Euler/beta57 на обоих проходах, BasicScheduler denoise 0,30. Меняет только настройки текущего проекта; генерацию не запускает."),
@@ -903,8 +898,10 @@ export function installSettings(Editor, { C, h, ICON }) {
             title: T("8 шагов Euler/beta57 → 3 шага ER-SDE/simple; BasicScheduler denoise 0,30; масштаб основы 55%."),
             onclick: () => this.applyHiResWinner(2) }, T("Результат №2 · Другая комбинация"))),
         h("div", { class: "h3l-row wrap" },
-          h("button", { type: "button", class: "h3l-btn sm", disabled: activeGenMode === "advanced" || undefined,
-            onclick: () => this.chooseGenerationMode("advanced") }, activeGenMode === "advanced" ? T("✓ Независимый режим включён") : T("Выбрать независимый режим"))),
+          h("button", { type: "button", class: "h3l-btn sm", disabled: g.refine_schedule_mode === "basic" || undefined,
+            onclick: () => set("refine_schedule_mode", "basic") }, g.refine_schedule_mode === "basic" ? T("✓ BasicScheduler") : T("BasicScheduler + свой сэмплер")),
+          h("button", { type: "button", class: "h3l-btn sm", disabled: g.refine_schedule_mode !== "basic" || undefined,
+            onclick: () => set("refine_schedule_mode", "sigma") }, g.refine_schedule_mode === "basic" ? T("Вернуть абсолютную σ") : T("✓ Абсолютная σ"))),
         h("div", { class: "h3l-note" }, T("Шаги, CFG, разрешение и shift находятся выше, в общих параметрах «Генерации».")),
         h("div", { class: "h3l-note" }, T("Оба профиля применяются только к текущему проекту и не запускают генерацию. Настройка «фото персонажей во 2-м проходе» сохраняется при выборе профиля: она пока не участвовала в сравнении №1/№2.")),
         h("div", { class: "h3l-note warn" }, T("Для честного A/B сравнения сохраняйте одинаковые сид, референсы и текст. Внешние KSAMPLER/SIGMAS могут переопределять параметры. BasicScheduler denoise 0,30 — не абсолютная σ 0,30.")));
@@ -997,7 +994,7 @@ export function installSettings(Editor, { C, h, ICON }) {
       const genPresets = this._setTab === "gen" ? this.generationPresetsPanel() : null;
       const TABS = [
         ["general", T("Общие"), []], ["dl", T("Загрузка моделей"), [dlPanel]],
-        ["gen", T("Генерация"), [genPresets, stages, uiPi ? null : st1, uiTwo ? st2 : null, displayedGenMode === "advanced" ? hiresAdvanced : null, accelS, memS, models, presetsDet]],
+        ["gen", T("Генерация"), [genPresets, stages, uiPi ? null : st1, uiTwo ? st2 : null, uiTwo ? hiresAdvanced : null, accelS, memS, models, presetsDet]],
         ["up", T("Апскейл"), [upS]], ["ext", T("Продление и звук"), [ext]],
         ["prev", T("Превью и кэш"), [pv, cache]], ["appearance", T("Внешний вид"), []],
       ];
