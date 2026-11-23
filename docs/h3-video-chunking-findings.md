@@ -75,6 +75,29 @@ field (the new default). Measured from the cached latents:
 - the decoded-frame drift over the same chain is far bigger (by clip 3: luma −0.148,
   contrast ×0.659) — the model's own content drift, not the noise field.
 
+### Video transition ramp (experiment, measured: no effect)
+
+`h3s_gen.video_lock_weights(total, overlap, ramp)` releases the end of the locked overlap
+gradually (smootherstep 1 → 0); the sampler gets the complement as its denoise mask, so the
+same weights drive the lock and the mask (`mask = 1 − w`, 0 = keep — confirmed by the
+sample-exact audio overlap). Setting: `settings.video_ramp_frames` (0 = off, 4/8/12/16/20
+pixel frames), in the cache key as `vramp`.
+
+A/B on the same three-clip person scenario (124 frames each, 768×448, 10 steps, h3studio,
+seed 777), ramp 0 vs ramp 12 px (3 latent frames released):
+
+| | ramp 0 | ramp 12 |
+|---|---|---|
+| decoded luma step, seam 1 (of 255) | −0.08 (×0.6 of a typical frame step) | −0.07 (×0.4) |
+| decoded luma step, seam 2 | +0.01 (×0.1) | +0.03 (×0.2) |
+| clip 3 vs clip 1: luma / contrast | −0.045 / ×0.884 | −0.045 / ×0.896 |
+| latent DC step, seam 1 / seam 2 | +0.0302 / −0.0313 | +0.0312 / −0.0350 |
+
+**Result: the ramp changes nothing measurable** — every number moves within the run-to-run
+noise, and the seams were already soft (the Studio colour pass and the shared noise field
+do the work). The ramp therefore stays an **opt-in experiment, default off**; it is not
+worth the risk of a partially released overlap.
+
 ### Why pixel frames, not indices
 
 * the video grid repeats every 17 pixel frames (5 latent steps): the latent steps sit on

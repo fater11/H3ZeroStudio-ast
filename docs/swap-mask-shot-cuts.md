@@ -44,6 +44,21 @@ frames.
 - Same fix, other half: `_restart_index()` catches a mid-block identity jump (a missed
   cut) and re-seeds or blanks the rest of the block.
 
+## The two decision branches, proven on the same footage
+
+The same video has two cuts: 138 (one person in the new shot) and 224 (a crowd). Both branches
+of `prepare` were run on the real frames (SAM 3.1, `h3s_swap_mask.prepare`, 280 frames):
+
+| cut | branch | result |
+|---|---|---|
+| 138, one person | auto | the mask **re-seeds** on the new shot's person: area 0.259 → 0.513 in one frame, no empty frames in 138–170 (`swap_auto_138.jpg`) |
+| 224, a crowd | auto | the mask goes **empty** at the cut (0.184 → 0.0) and stays empty for the whole shot (224–279): the pack refuses to guess, so no bystander is swapped |
+| 224, a crowd | explicit anchor (`{"frame": 224, "point": [0.49, 0.59]}`) | the mask re-seeds exactly on the anchored subject and continues through the shot (no empty frames) |
+
+So the rule is: **one clear person → follow them; several people → leave the shot alone unless
+the user names the person.** The anchor must be placed on the body — a point on a red tie
+segments the tie (SAM segments whatever the point hits), which is worth knowing when picking.
+
 ## `noise_mask` polarity (for the video-ramp step)
 
 `sample_segment` builds `w_*` as the **lock weight** (1 = take the finished latent) and
