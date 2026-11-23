@@ -916,7 +916,9 @@ export function installSettings(Editor, { C, h, ICON }) {
         r.oninput = () => { sp(); v.textContent = T("{0} с", Number(r.value).toFixed(2)); set("audio_xfade_sec", Number(r.value), { coalesce: "xf", render: "none" }); };
         return h("div", { class: "h3l-row" }, r, v); })();
       const ext = det(T("Продление и звук"),
-        this.field(T("Перекрытие при продлении (по умолчанию)"), ovSel),
+        h("div", { class: "h3l-note" }, T("Перекрытие при продлении: 22 кадра (1 блок) — измерено как лучшее (39 и 56 дают просадку на стыке); настройка конкретного стыка — в карточке отрезка.")),
+        h("details", { class: "h3l-gen-manage" }, h("summary", null, T("Дополнительно · перекрытие по умолчанию")),
+          this.field(T("Перекрытие при продлении (по умолчанию)"), ovSel)),
         this.field(T("Звук: контекст прошлого отрезка"), acSel),
         this.toggle(T("Эксперимент · закрепить ОДИН голос"), g.self_anchor_voice === true,
           (v) => set("self_anchor_voice", v),

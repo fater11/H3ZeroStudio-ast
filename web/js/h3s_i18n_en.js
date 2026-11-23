@@ -1683,6 +1683,8 @@ export default {
   "только перекрытие": "overlap only",
   "Продление и звук": "Continuation and sound",
   "Перекрытие при продлении (по умолчанию)": "Overlap on continuation (default)",
+  "Перекрытие при продлении: 22 кадра (1 блок) — измерено как лучшее (39 и 56 дают просадку на стыке); настройка конкретного стыка — в карточке отрезка.": "Overlap on continuation: 22 frames (1 block) measured best (39 and 56 dip at the seam); a single joint is tuned on the segment card.",
+  "Дополнительно · перекрытие по умолчанию": "Advanced · default overlap",
   "Перекрытие {0} кадр. даёт просадку на склейке — 22 кадра (1 блок) измерены как лучший вариант.": "An overlap of {0} fr. makes the seam dip — 22 frames (1 block) measured best.",
   "Звук: контекст прошлого отрезка": "Sound: previous segment's context",
   "Фиксировать перекрытие": "Lock the overlap",
