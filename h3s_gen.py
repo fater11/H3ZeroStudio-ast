@@ -2188,7 +2188,21 @@ def freeze_segment(project_id, key):
     data = torch.load(dst, map_location="cpu", weights_only=True)
     frames = core.frames_for_latent(int(data["v"].shape[2]))
     out = {"key": key, "frames": frames, "file": view_ref(sub + "/frozen", f"seg_{key}.pt"), "created": int(time.time())}
-    for kind, name in (("video", f"seg_{key}.mp4"), ("strip", f"seg_{key}_tiles.jpg"), ("poster", f"seg_{key}_poster.jpg")):
+    import glob
+
+    def _preview(plain, pattern):
+        """The plain name first, else the Studio-coloured variant (seg_<key>_studio_c3*.mp4)."""
+        if os.path.isfile(os.path.join(d, plain)):
+            return plain
+        hits = sorted(glob.glob(os.path.join(d, pattern)))
+        return os.path.basename(hits[0]) if hits else None
+
+    for kind, plain, pattern in (("video", f"seg_{key}.mp4", f"seg_{key}_studio*.mp4"),
+                                 ("strip", f"seg_{key}_tiles.jpg", f"seg_{key}_studio*_tiles.jpg"),
+                                 ("poster", f"seg_{key}_poster.jpg", f"seg_{key}_studio*_poster.jpg")):
+        name = _preview(plain, pattern)
+        if not name:
+            continue
         sp, dp = os.path.join(d, name), os.path.join(fdir, name)
         if not os.path.isfile(dp) and os.path.isfile(sp):
             shutil.copy2(sp, dp)
@@ -3658,8 +3672,8 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                              "Сначала нажмите «🎨 Цветокоррекция» в настройках.")
         if studio_cached is not None:
             frames = studio_cached[0]
-            log(f"studio: colour-frame cache HIT clip {i + 1} {studio_cache_key[:12]} "
-                "(skip take-master decode and Lab processing)")
+            vlog(f"studio: colour-frame cache HIT clip {i + 1} {studio_cache_key[:12]} "
+                 "(skip take-master decode and Lab processing)")
         else:
             frames = take_frames(k, v, fresh, i)
         fr_used = None
@@ -3791,7 +3805,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                     studio_ref_lab = studio.stats(frames, window=36)
                     if studio_ref_lab is not None and len(frames) > 48:
                         frames = studio.pull(frames, studio_ref_lab, 36, i + 1)
-                    log(f"studio: clip {i + 1} set the Lab colour reference (first 36 frames)")
+                    vlog(f"studio: clip {i + 1} set the Lab colour reference (first 36 frames)")
                 elif studio_ref_lab is not None:
                     if it["link"] == "extend" and it["overlap"] and studio_prev_tail is not None:
                         frames = studio.tone_shift(studio_prev_tail, frames, it["overlap"], i + 1)
