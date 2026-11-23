@@ -27,7 +27,7 @@ export const DEFAULT_SETTINGS = {
   continuity_phrase: DEFAULT_CONTINUITY, ref_size: "match", cache: true, resume_only: false,
   audio_seam_lock: true, audio_xfade: true, audio_xfade_sec: 0.4, audio_match: true, audio_declick: true, level_lock: true, level_lock_frames: 12, magnet: false, vram_headroom_gb: 0,
   preview_tiny_vae: "auto", preview_max_res: 512, preview_quality: 80, preview_frames: 48,
-  export_grain: 0, export_preset: "",
+  refine_prompt: "", export_grain: 0, export_preset: "",
   preview_fps: 0, preview_suppress: true, preview_audio: true,
   verbose_log: true,
   // draft mode (see h3s_core.py): quality "final" | "draft"; final_mode "full" | "refine" (final from the draft)
@@ -253,7 +253,7 @@ export const GLOBAL_KEYS = ["final_mode", "piflow_steps", "piflow_lora2", "piflo
                "upscale_method", "upscale_rev", "seg_upscale", "upscale_profiles", "upscale_chunk_sec", "upscale_chunk_overlap", "upscale_gen", "upscale_model", "overlap_blocks", "audio_context_sec", "self_anchor_voice", "lock_overlap", "continuation_method", "continuity_ref",
                "continuity_phrase", "ref_size", "cache", "audio_seam_lock", "audio_xfade", "audio_xfade_sec", "audio_match", "audio_declick", "level_lock", "level_lock_frames", "magnet", "vram_headroom_gb",
                "preview_tiny_vae", "preview_max_res", "preview_quality", "preview_frames", "preview_fps", "preview_suppress",
-               "export_grain", "export_preset",
+               "refine_prompt", "export_grain", "export_preset",
                "verbose_log", "accel", "memsave"];
 /** Refine-stage sampler / scheduler / cfg in the sigs — only when set (mirror of h3s_core.refine_extra). */
 export function refineExtra(s) { const x = [s.refine_sampler || "", s.refine_scheduler || "", Number(s.refine_cfg || 0)]; return x.some(Boolean) ? [["rx", ...x]] : []; }

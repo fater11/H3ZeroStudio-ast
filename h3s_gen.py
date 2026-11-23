@@ -1545,6 +1545,9 @@ def sample_segment(model, clip, vae, project, index, items, prev, ref_images, au
         }
     prompt = core.compose_prompt(project, index, video=(kind != "refine"),
                                  identity_image_ids=identity_image_ids)
+    if kind == "refine" and (s.get("refine_prompt") or "").strip():
+        # the second pass can aim at detail instead of re-describing the scene (the reference workflow does this)
+        prompt = (s["refine_prompt"]).strip()
     if VERBOSE[0]:
         seg = project["segments"][index]
         labels = [f"<Picture {j + 1}>={a.get('name') or a.get('file')}" for j, a in enumerate(core.ordered_refs(project, seg))]
