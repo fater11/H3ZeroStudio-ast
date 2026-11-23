@@ -4269,8 +4269,16 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                     notify("warn", msg=f"FFmpeg concat не сработал ({concat_error}). Используем точную сборку H3.")
             try:
                 if not concat_done:
-                    media.write_mp4(full_path, images, fps, out_audio["waveform"][0] if out_audio else None,
-                                    out_audio["sample_rate"] if out_audio else None, crf=16,
+                    # export-only polish: film grain (masks H3 banding at 24 fps) and the CPU x264 preset
+                    grain = max(0.0, min(0.02, float(s.get("export_grain") or 0)))
+                    preset = s.get("export_preset") if s.get("export_preset") in (
+                        "ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow") else "medium"
+                    out_images = images
+                    if grain > 0:
+                        out_images = (images + torch.randn_like(images) * grain).clamp(0, 1)
+                        log(f"export: film grain {grain:g}")
+                    media.write_mp4(full_path, out_images, fps, out_audio["waveform"][0] if out_audio else None,
+                                    out_audio["sample_rate"] if out_audio else None, crf=16, preset=preset,
                                     progress=export_progress, encoder=export_encoder)
             except Exception as nv_error:
                 if export_encoder != "nvenc":
@@ -4282,8 +4290,8 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                 except OSError:
                     pass
                 notify("phase", seg=max(0, len(items) - 1), phase="export_encode", fd=0, fn=int(images.shape[0]))
-                media.write_mp4(full_path, images, fps, out_audio["waveform"][0] if out_audio else None,
-                                out_audio["sample_rate"] if out_audio else None, crf=16,
+                media.write_mp4(full_path, out_images, fps, out_audio["waveform"][0] if out_audio else None,
+                                out_audio["sample_rate"] if out_audio else None, crf=16, preset=preset,
                                 progress=export_progress, encoder="cpu")
         except Exception as e:
             log(f"full preview mp4 failed: {e}")

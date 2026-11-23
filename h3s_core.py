@@ -84,6 +84,8 @@ DEFAULT_SETTINGS = {
     "vram_headroom_gb": 0.0,   # VRAM kept free while sampling / decoding (ComfyUI's reserve, never lowered); off by default: a reserve makes ComfyUI load the model partially (up to ~2x slower steps on 12 GB cards)
     # live preview while sampling (do not affect the cache keys)
     "preview_tiny_vae": "auto", "preview_max_res": 512, "preview_quality": 80, "preview_frames": 48,
+    "export_grain": 0.0,         # film grain in the final MP4 only (0 = off; 0.005 is a good start)
+    "export_preset": "",         # CPU x264 preset of the final MP4 ("" = medium), slower = better compression
     "preview_fps": 0, "preview_suppress": True, "preview_audio": True,
     "verbose_log": True,       # detailed [H3ZS] console log (run, segments, every step)
     # draft mode: «Черновик» samples every segment small and fast; «Финал» either samples again at full size
@@ -148,6 +150,7 @@ GLOBAL_KEYS = ("final_mode", "piflow_steps", "piflow_lora2", "piflow_lora4", "st
                "upscale_method", "upscale_rev", "seg_upscale", "upscale_profiles", "upscale_chunk_sec", "upscale_chunk_overlap", "upscale_gen", "upscale_model", "overlap_blocks", "audio_context_sec", "self_anchor_voice", "lock_overlap", "continuation_method", "continuity_ref",
                "continuity_phrase", "ref_size", "cache", "resume_only", "audio_seam_lock", "audio_xfade", "audio_xfade_sec", "audio_match", "audio_declick", "level_lock", "level_lock_frames", "magnet", "vram_headroom_gb",
                "preview_tiny_vae", "preview_max_res", "preview_quality", "preview_frames", "preview_fps", "preview_suppress",
+               "export_grain", "export_preset",
                "verbose_log", "accel", "memsave")
 
 

@@ -1001,7 +1001,23 @@ export function installSettings(Editor, { C, h, ICON }) {
         h("div", { class: "h3l-grid2" }, num("preview_max_res", T("max_res (0 = полное)"), 8, 0, 4096), num("preview_quality", "jpeg", 1, 30, 100)),
         h("div", { class: "h3l-grid2" }, num("preview_frames", T("кадров"), 1, 1, 240), num("preview_fps", T("fps (0 = реал.)"), 1, 0, 60)),
         this.toggle(T("Скрыть стандартное превью ComfyUI"), g.preview_suppress, (v) => set("preview_suppress", v), T("Только превью редактора")),
-        this.toggle(T("Подробный лог в консоли"), g.verbose_log, (v) => set("verbose_log", v), T("[H3ZS] в консоли ComfyUI: запуск, отрезки, шаги, стыки и звук")));
+        this.toggle(T("Подробный лог в консоли"), g.verbose_log, (v) => set("verbose_log", v), T("[H3ZS] в консоли ComfyUI: запуск, отрезки, шаги, стыки и звук")),
+        h("div", { class: "h3l-lbl" }, T("Экспорт MP4"), h("em", null, T("только итоговый файл — кэш и дубли не меняются"))),
+        h("div", { class: "h3l-grid2" },
+          (() => {
+            const gr = h("input", { class: "h3l-in sm", type: "number", step: "0.001", min: "0", max: "0.02", value: Number(g.export_grain || 0) });
+            gr.onchange = () => set("export_grain", Math.max(0, Math.min(0.02, Number(gr.value) || 0)));
+            return this.field(T("Плёночное зерно (0 = выкл)"), gr);
+          })(),
+          this.field(T("Пресет кодировщика"), (() => {
+            const ps = h("select", { class: "h3l-sel" },
+              h("option", { value: "", selected: !g.export_preset }, T("по умолчанию · medium")),
+              ...["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"].map((v) =>
+                h("option", { value: v, selected: g.export_preset === v }, v)));
+            ps.onchange = () => set("export_preset", ps.value);
+            return ps;
+          })())),
+        h("div", { class: "h3l-note" }, T("Зерно маскирует блочность H3 на 24 fps: 0.005 — хороший старт, 0.01 — заметно. Пресеты slow/veryslow дают лучшее сжатие за большее время; на NVENC пресет не влияет.")));
       // models
       const known = this.upKnown(), paths = this.opts.paths || {};
       const taeh3 = (this.opts.tiny_vaes || []).some((x) => /taeh3/i.test(x));
