@@ -127,6 +127,18 @@ sample-exact splice … corr 1.0`) при `w_a = 1`. Видеорампа = по
   маршруты `/h3lab/models/downloads/reveal|remove`. Проверено end-to-end: reveal вернул путь
   установленной VAE, remove удалил подложенный тестовый файл, статус вернулся в `missing`.
 
+## Публикация (по просьбе пользователя — потом)
+
+Цель: `https://github.com/fater11/H3ZeroStudio-ast` (репозиторий уже существует, HTTP 200).
+Сейчас у локального репозитория **нет remote**, `gh` CLI на машине не установлен.
+Шаги, когда дойдём:
+1. `git remote add origin https://github.com/fater11/H3ZeroStudio-ast.git`;
+2. аутентификация: либо SSH-ключ (`git@github.com:fater11/H3ZeroStudio-ast.git`), либо HTTPS с
+   personal access token — спросить у пользователя, что удобнее (без `gh` push иначе не пройдёт);
+3. `git push -u origin main` — дерево чистое, HEAD `42b51dc`; в репозитории уже лежат
+   `docs/promo.mp4` (6.8 МБ) и `docs/images/promo.gif` (12 МБ) — для GitHub нормально, но если
+   репозиторий публичный и хочется лёгкий клон, их можно вынести в Releases.
+
 ## Источники
 
 - `docs/h3-video-chunking-findings.md` — таблицы замеров этой сессии.
