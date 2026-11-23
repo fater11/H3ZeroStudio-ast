@@ -50,3 +50,6 @@ themes_user/
 node_modules/
 tests/harness/node_modules
 **/node_modules
+
+# manual backups: replaced by git history (they stay in the first commit)
+*.bak
