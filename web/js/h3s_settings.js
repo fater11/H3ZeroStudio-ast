@@ -396,6 +396,15 @@ export function installSettings(Editor, { C, h, ICON }) {
       return det(T("Ускорение (attention / кэш)"),
         h("div", { class: "h3l-note" }, T("Патчи навешиваются на модель H3 при загрузке (без проводов), в том числе на доработку апскейла. Бэкенды внимания взаимоисключающие.")),
         this.field(T("Attention"), attPills),
+        this.toggle(T("Разреженное внимание (VSA)"), a.sparse, (v) => put({ sparse: !!v }),
+          caps.sparse ? T("Встроенная нода ComfyUI «Model Sparse Attention»: держит 10 % блоков внимания, короткие последовательности идут плотно. Выигрыш растёт с длиной клипа; качество проверяйте на своём материале.")
+            : T("Нет встроенной ноды ComfyUI «Model Sparse Attention» (нужен ComfyUI 0.38+)."),
+          !caps.sparse),
+        a.sparse && caps.sparse ? this.field(T("Доля блоков VSA, %"), (() => {
+          const sp = h("input", { class: "h3l-in sm", type: "number", step: "1", min: "2", max: "50", value: a.sparse_keep });
+          sp.onchange = () => put({ sparse_keep: Number(sp.value) });
+          return sp;
+        })()) : null,
         this.toggle(T("Veda Sparse Attention (MiniMax H3)"), a.veda, (v) => put({ veda: !!v }), vedaHint, !caps.veda),
         caps.veda ? this.field(T("Предиктор Veda"), predSel) : null,
         this.toggle(T("TeaCache (кэш шагов H3)"), a.teacache, (v) => put({ teacache: !!v }), teaHint, !caps.teacache),
@@ -840,7 +849,7 @@ export function installSettings(Editor, { C, h, ICON }) {
           h("div", { class: "h3l-note" }, T("Shift применяется к модели до pi-Flow Scheduler. Менять только для осознанных экспериментов.")),
           h("div", { class: "h3l-grid2" }, num("shift_video", T("shift видео"), 0.1, 0, 100), num("shift_audio", T("shift аудио"), 0.1, 0.01, 100)))
           : h("div", { class: "h3l-grid2" }, num("shift_video", T("shift видео"), 0.1, 0, 100), num("shift_audio", T("shift аудио"), 0.1, 0.01, 100)),
-        !uiPi ? h("div", { class: "h3l-note" }, T("Turbo LoRA Ref2VA: 4 шага, cfg 1. Без LoRA — ~20 шагов. shift видео 0 — расписание модели. fps — всегда 24 (H3).")) : null);
+        !uiPi ? h("div", { class: "h3l-note" }, T("Turbo LoRA Ref2VA: 4 шага, cfg 1. Без LoRA — ~20 шагов. shift видео 0 — расписание модели. fps — всегда 24 (H3). LCM даёт лучший звук, но слабее движение и картинку.")) : null);
       const scale = h("select", { class: "h3l-sel" }, C.DRAFT_SCALES.map((k) => { const [a, b] = C.workResolution({ ...g, quality: "draft", draft_scale: k }, "draft"); return h("option", { value: k, selected: Number(g.draft_scale) === k }, T("{0} Мп · {1}×{2} ({3}%)", (a * b / 1e6).toFixed(2), a, b, Math.round(k * 100))); }));
       scale.onchange = () => set("draft_scale", Number(scale.value));
       const st1 = det(T("Черновик = Проход 1"),

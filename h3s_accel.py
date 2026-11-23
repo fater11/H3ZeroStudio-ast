@@ -36,6 +36,8 @@ import sys
 ATTENTION_BACKENDS = ("kitchen", "sage", "flash", "pytorch")
 DEFAULT_ACCEL = {
     "attention": "kitchen",   # dense backend; falls back when unavailable
+    "sparse": False,           # ComfyUI's block-sparse attention (VSA) on top of the dense backend
+    "sparse_keep": 10,         # percent of the attention blocks kept by VSA
     "veda": False,
     "veda_predictor": "",     # "" = first models/veda/*.safetensors
     "teacache": False,
@@ -181,6 +183,35 @@ def _compile_available():
         return False
 
 
+def _import_sparse():
+    """ComfyUI's built-in block-sparse attention node (Model Sparse Attention, 0.38+)."""
+    try:
+        from comfy_extras.nodes_sparse_attention import BlockSparseAttention
+        return BlockSparseAttention
+    except Exception:
+        return None
+
+
+def _sparse_ok():
+    return _import_sparse() is not None
+
+
+def _apply_sparse(model, accel):
+    """VSA: keep a share of the attention blocks, dense fallback on short sequences.
+
+    Same defaults as the ComfyUI node: 10% of the blocks, the first two layers dense, the
+    head/tail tokens exact; below min_tokens the model uses the dense backend untouched.
+    """
+    cls = _import_sparse()
+    if cls is None:
+        raise RuntimeError("block-sparse attention node is not available")
+    keep = int(accel.get("sparse_keep") or 10)
+    out = cls.execute(model, {"selection": "vsa", "selection.keep_percent": keep},
+                      start_percent=0.0, end_percent=1.0, dense_blocks="0,1", min_tokens=12288,
+                      extra_tokens=256, sink_conditioning="exact_kv_and_rows", verbose=False)
+    return out[0] if isinstance(out, (tuple, list)) else out
+
+
 def capabilities():
     """Runtime availability for the Settings UI and apply()."""
     veda = _import_veda() is not None
@@ -190,6 +221,7 @@ def capabilities():
     sage = _registered("sage") or _registered("sage3")
     flash = _registered("flash")
     return {
+        "sparse": _sparse_ok(),
         "kitchen": kitchen,
         "sage": sage,
         "flash": flash,
@@ -213,6 +245,12 @@ def normalize_accel(raw):
     if att not in ATTENTION_BACKENDS:
         att = "kitchen"
     out["attention"] = att
+    out["sparse"] = bool(raw.get("sparse", False))
+    try:
+        keep = int(float(raw.get("sparse_keep", 10)))
+    except (TypeError, ValueError):
+        keep = 10
+    out["sparse_keep"] = max(2, min(50, keep))
     out["veda"] = bool(raw.get("veda", False))
     out["veda_predictor"] = str(raw.get("veda_predictor") or "")[:300]
     out["teacache"] = bool(raw.get("teacache", False))
@@ -434,6 +472,16 @@ def apply(model, settings):
             used.append(f"attention={used_name}")
         except Exception as e:
             log(f"attention backend failed ({used_name}): {e}")
+    # 1b) block-sparse attention (ComfyUI core node, no extra pack)
+    if accel["sparse"]:
+        if not caps["sparse"]:
+            log("sparse attention requested but the ComfyUI block-sparse node is missing — skipped")
+        else:
+            try:
+                model = _apply_sparse(model, accel)
+                used.append(f"sparse(vsa {accel['sparse_keep']}%)")
+            except Exception as e:
+                log(f"sparse attention failed: {e}")
     # 2) Veda (sparse override on top of the dense backend)
     if accel["veda"]:
         if not caps["veda"]:

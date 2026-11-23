@@ -68,10 +68,13 @@ export function normalizeMemsave(v) {
   return { mode: MEMSAVE_MODES.includes(v.mode) ? v.mode : "auto", chunks: n(v.chunks ?? 2, 2, 1, 16), threshold: n(v.threshold ?? 4096, 4096, 256, 262144) };
 }
 export function normalizeAccel(raw) {
-  const d = { attention: "kitchen", veda: false, veda_predictor: "", teacache: false, teacache_thresh: 0.15, compile: false, compile_backend: "inductor" };
+  const d = { attention: "kitchen", sparse: false, sparse_keep: 10, veda: false, veda_predictor: "", teacache: false, teacache_thresh: 0.15, compile: false, compile_backend: "inductor" };
   raw = raw && typeof raw === "object" ? raw : {};
   const att = String(raw.attention || d.attention).toLowerCase();
   d.attention = ["kitchen", "sage", "flash", "pytorch"].includes(att) ? att : "kitchen";
+  d.sparse = !!raw.sparse;
+  const keep = Math.trunc(Number(raw.sparse_keep));
+  d.sparse_keep = Math.max(2, Math.min(50, Number.isFinite(keep) ? keep : 10));
   d.veda = !!raw.veda; d.veda_predictor = String(raw.veda_predictor || "").slice(0, 300);
   d.teacache = !!raw.teacache;
   const thr = Number(raw.teacache_thresh); d.teacache_thresh = Math.round(Math.min(0.5, Math.max(0.05, Number.isFinite(thr) ? thr : 0.15)) * 1000) / 1000;
