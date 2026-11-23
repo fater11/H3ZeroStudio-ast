@@ -33,7 +33,8 @@ MAX_REF_VIDEOS = 3                 # <Video k> references per segment (MiniMaxH3
 REF_VIDEO_MAX_SEC = 15.0           # H3 reference videos: 2-15 s
 ASPECTS = {"16:9": (16, 9), "9:16": (9, 16), "1:1": (1, 1), "4:3": (4, 3), "3:4": (3, 4), "21:9": (21, 9)}
 SCHEMA_VERSION = 1
-KEY_VERSION = 1   # in every cache key — decoupled from the project schema, so a schema bump never re-samples clips
+KEY_VERSION = 2   # in every cache key — decoupled from the project schema, so a schema bump never re-samples clips
+# 2: continuation noise is positioned on absolute film time (h3s_gen.position_noise) — every take resampled
 
 DEFAULT_CONTINUITY = ("Continuity: <Picture {n}> is the last frame of the previous shot of this video; "
                       "continue seamlessly from it and keep characters, faces, clothing, lighting and details consistent with <Picture {n}>.")
@@ -1424,8 +1425,43 @@ def seg_param(project, seg, index, key):
     if key in ov:
         return ov[key]
     if key == "seed":
-        return int(s.get("seed", 0)) + index
+        # One seed for the whole film: the noise field is shared by all segments (h3s_gen.position_noise),
+        # so a continued clip continues its predecessor's noise instead of restarting it. Segments differ
+        # by their absolute frames, not by a per-segment seed.
+        return int(s.get("seed", 0))
     return s.get(key)
+
+
+def noise_seed_for(project, index, kind=None):
+    """The seed of the noise field a pass samples from (h3s_gen.position_noise).
+
+    The field belongs to the film, not to the clip: every segment draws the noise of its own absolute
+    frames from ONE field, so the seam between two continued clips keeps its level instead of stepping.
+    A segment with its own seed (a new take, Seed Hunter) starts a new field — and the segments that
+    continue it inherit that field, so the chain stays continuous. An independent final-pass seed
+    (settings.refine_seed) is its own field as well.
+    """
+    s = project["settings"]
+    g = s.get("_global_seed")
+    if g is not None and int(g) >= 0:
+        return int(g)
+    seg = project["segments"][index]
+    ov = seg.get("overrides") or {}
+    if kind == "refine":
+        rs = ov.get("refine_seed")
+        rs = rs if rs is not None else s.get("refine_seed", -1)
+        if rs is not None and int(rs) >= 0:
+            return int(rs)
+    items = plan(project)
+    i = index
+    while True:
+        own = (project["segments"][i].get("overrides") or {}).get("seed")
+        if own is not None and int(own) >= 0:
+            return int(own)          # its own seed: a new field (a new take / Seed Hunter)
+        if i == 0 or items[i]["link"] != "extend":
+            break
+        i -= 1                        # the chain continues into the previous segment
+    return int(s.get("seed", 0))
 
 
 def effective_params(project, index):
@@ -2224,6 +2260,9 @@ def segment_keys(project, ref_sigs=None, env_sig="", kind=None, up_env="", parts
         env_i = env_sig[i] if isinstance(env_sig, (list, tuple)) else env_sig   # per-clip model presets
         data = {
             "v": KEY_VERSION, "env": env_i, "wh": [w, h], "frames": it["frames"], "ov": it["overlap"],
+            # the noise field is keyed by the absolute frame: the same clip at another place on the
+            # timeline samples other noise, so its place belongs to the key
+            "at": it["start"],
             "prompt": compose_prompt(project, i), "neg": s.get("negative") or "",
             "refs": [[a["id"], *asset_kf(a), ref_sigs.get(a["id"], "")] for a in ordered_refs(project, seg)],
             "params": pass_params(project, i, kind), **({"piflow_env": s.get("_piflow_env")} if s.get("piflow_steps") else {}), "luna_two_resolution": "high_denoise_065_v1" if s.get("final_mode") == "luna" and kind == "full" else False, "luna_upscale": s.get("_luna_upscale_env") if s.get("final_mode") == "luna" else None, "pass2": s.get("_pass2_external") if s.get("final_mode") == "luna" and kind == "full" else None, "lock": bool(s.get("lock_overlap", True)),

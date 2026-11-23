@@ -872,8 +872,10 @@ export class H3Editor {
         Array.from({ length: C.MAX_OVERLAP_BLOCKS + 1 }, (_, o) => h("option", { value: o, selected: s.overlap_blocks === o }, this.ovLabel(o))));
       ovS.onchange = () => this.setSegOverlap(i, Number(ovS.value));
       const want = C.wantedOverlap(this.p, i), fit = want > 0 && it.overlap < C.overlapFrames(want);
+      const longOv = it.overlap > C.overlapFrames(1);   // 39+ frames of overlap measured worse at the seam
       basics.push(h("div", null, h("div", { class: "h3l-lbl" }, T("Перекрытие"), h("em", null, it.overlap ? T("сейчас {0} кадр. ≈ {1} с", it.overlap, (it.overlap / C.FPS).toFixed(2)) : T("нет"))), ovS,
-        fit ? h("div", { class: "h3l-note err" }, T("Запрошено {0} кадр., помещается {1}: перекрытие должно быть короче обоих отрезков.", C.overlapFrames(want), it.overlap || 0)) : null));
+        fit ? h("div", { class: "h3l-note err" }, T("Запрошено {0} кадр., помещается {1}: перекрытие должно быть короче обоих отрезков.", C.overlapFrames(want), it.overlap || 0)) : null,
+        longOv ? h("div", { class: "h3l-note warn" }, T("Перекрытие {0} кадр. даёт просадку на склейке — 22 кадра (1 блок) измерены как лучший вариант.", it.overlap)) : null));
     }
     if (s.source) basics.push(this.footageBlock(i));
     const kMin = Math.max(1, i > 0 && it.overlap ? (it.overlap - 5) / 17 + 1 : 1), kMax = (C.MAX_FRAMES - 5) / 17;
@@ -984,7 +986,7 @@ export class H3Editor {
     return h("details", { class: "h3l-det", open: n > 0 },
       h("summary", null, T("Свои параметры отрезка"), n ? h("span", { class: "cnt" }, n) : null),
       h("div", { class: "in" },
-        h("div", { class: "h3l-grid3" }, num("seed", 1, T("авто {0}", Number(g.seed) + i)), num("steps", 1, g.steps), num("cfg", 0.1, g.cfg)),
+        h("div", { class: "h3l-grid3" }, num("seed", 1, T("авто {0}", Number(g.seed))), num("steps", 1, g.steps), num("cfg", 0.1, g.cfg)),
         h("div", { class: "h3l-grid3" }, num("denoise", 0.01, g.denoise), num("shift_video", 0.1, g.shift_video), num("shift_audio", 0.1, g.shift_audio)),
         h("div", { class: "h3l-grid2" }, sel("sampler", this.opts.samplers),
           this.field(label.scheduler, this.schedSel(ov.scheduler || "", this.opts.schedulers,
@@ -992,7 +994,7 @@ export class H3Editor {
             { value: ov.sigmas || "", onch: (t) => this.mutate((p) => { const o = p.segments[i].overrides; if (!t.trim()) delete o.sigmas; else o.sigmas = t; }, { coalesce: "ovsig" + s.id, render: "none" }) },
             T("— {0} —", g.scheduler)), "scheduler" in ov ? "ov" : "")),
         n ? h("button", { class: "h3l-btn sm", onclick: () => this.mutate((p) => { p.segments[i].overrides = {}; }) }, T("Сбросить к общим"))
-          : h("div", { class: "h3l-note" }, T("Пустое поле — берётся общее значение. Сид по умолчанию: общий + номер отрезка − 1."))));
+          : h("div", { class: "h3l-note" }, T("Пустое поле — берётся общее значение. Сид один на весь ролик: шум общий и идёт по абсолютным кадрам, свой сид отрезка = свой шум."))));
   }
 
   statusLine(i) {

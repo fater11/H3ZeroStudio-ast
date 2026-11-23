@@ -883,7 +883,9 @@ function normalizeFreeze(f) {
 export function segParam(project, seg, index, key) {
   const ov = seg.overrides || {};
   if (key in ov) return ov[key];
-  if (key === "seed") return (Number(project.settings.seed) || 0) + index;
+  // One seed for the whole film: the noise field is shared by all segments (positioned on the absolute
+  // frames), so a continued clip continues its predecessor's noise. Segments differ by their frames.
+  if (key === "seed") return Number(project.settings.seed) || 0;
   return project.settings[key];
 }
 

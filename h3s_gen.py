@@ -1366,6 +1366,51 @@ def refs_line(project, index, kmode, images, ref_videos, ref_audios, cards, cont
     return "refs: " + ", ".join(parts)
 
 
+# ---------------------------------------------------------------- continuation noise
+# One noise field for the whole film instead of one per clip. comfy.sample.prepare_noise() restarts the
+# generator at every segment, so a continued clip drew a field unrelated to the one its predecessor used
+# on the very same frames and the DC level jumped on every stitch (measured: blue +1.37 with a fresh
+# field, +0.13 with a shared one). Here every latent step draws its own block from a generator seeded by
+# (seed, absolute pixel frame of the step, stream), so a step gets the same noise wherever it lands.
+# Pixel frames, not latent or audio indices: the video grid repeats every 17 pixel frames (5 latent steps,
+# points at 17k+{0,1,5,9,13}) while the audio stream is a uniform 40 Hz tick, so an index offset drifts
+# by the grid head exactly at the seams. Clip starts are multiples of 17, so the grids coincide and the
+# field of a continued clip continues its predecessor's step by step.
+NOISE_TAG = "h3zs-1"   # changing it re-rolls every take; keep it stable
+
+
+def noise_seed(seed, frame, stream):
+    """Stable 64-bit generator seed of one latent step (hashlib: Python's hash() is salted per process)."""
+    d = hashlib.blake2b(f"{NOISE_TAG}|{int(seed)}|{int(frame)}|{stream}".encode(), digest_size=8).digest()
+    return int.from_bytes(d, "little")
+
+
+def _noise_block(seed, frame, stream, shape):
+    g = torch.Generator()
+    g.manual_seed(noise_seed(seed, frame, stream))
+    return torch.randn(shape, generator=g, dtype=torch.float32)
+
+
+def position_noise(video, audio, seed, start):
+    """The noise field of a segment as if the whole film shared one field: keyed by absolute film time.
+
+    `start` is the segment's first pixel frame on the stitched timeline (core.plan -> item["start"]), so a
+    continued clip draws the same noise the previous clip had on the overlapping frames — and the same
+    field right after the seam, which is what keeps the level from stepping. Both arms are IID normal,
+    exactly like prepare_noise(); only the seeding changed.
+    """
+    c, t, h, w = (int(x) for x in video.shape[1:])
+    v = torch.empty([1, c, t, h, w], dtype=torch.float32)
+    for i in range(t):
+        v[:, :, i] = _noise_block(seed, start + core.frames_for_latent(i), "v", [1, c, 1, h, w])[:, :, 0]
+    c, ch, a_n = (int(x) for x in audio.shape[1:])
+    tick = int(round(start * core.AUDIO_LATENT_FPS / core.FPS))   # the segment's first absolute audio tick
+    a = torch.empty([1, c, ch, a_n], dtype=torch.float32)
+    for k in range(a_n):
+        a[..., k] = _noise_block(seed, tick + k, "a", [1, c, ch, 1])[..., 0]
+    return comfy.nested_tensor.NestedTensor((v, a))
+
+
 def sample_segment(model, clip, vae, project, index, items, prev, ref_images, audio_z=None, step_cb=None, preview_cb=None,
                    audio_cov=None, ref_audios=None, ref_videos=None, init=None, kind="full", refine=None,
                    sampling_started=None, guide=None):
@@ -1740,7 +1785,10 @@ def sample_segment(model, clip, vae, project, index, items, prev, ref_images, au
         ov_, oa_ = result["samples"].unbind()
         return ov_.float().cpu(), oa_.float().cpu()
 
-    noise = comfy.sample.prepare_noise(samples, p["seed"])
+    field_seed = core.noise_seed_for(project, index, kind)
+    noise = position_noise(video, audio, field_seed, it["start"])   # one field for the whole film (see position_noise)
+    vlog(f"  noise: field positioned at pixel frame {it['start']} (field seed {field_seed}, audio tick "
+         f"{int(round(it['start'] * core.AUDIO_LATENT_FPS / core.FPS))}) — shared with the neighbouring clips")
     if sampling_started is not None:
         sampling_started()
     prefer_stage_sampler = (advanced_hires and bool(s.get(kind + "_sampler")))

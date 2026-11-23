@@ -225,6 +225,74 @@ def test_two_segments_extend_and_cache(patcher, dirs):
     assert [r["cached"] for r in info4["segments"]] == [False, False]
 
 
+def test_continuation_noise_is_keyed_to_absolute_film_time():
+    """Both arms of a segment draw the noise the film would have at those frames, wherever the clip starts."""
+    video, audio = torch.zeros(1, 24, 12, 4, 5), torch.zeros(1, 32, 2, 40)
+    v0, a0 = gen.position_noise(video, audio, 11, 0).unbind()
+    v1, a1 = gen.position_noise(video, audio, 11, 17).unbind()
+    assert v0.shape == video.shape and a0.shape == audio.shape
+    # the video grid repeats every 17 pixel frames (5 latent steps): a clip that starts on the grid shares
+    # the field of its predecessor step by step, so the whole seam (not only its first frame) is continuous
+    assert core.frames_for_latent(5) == 17 and core.frames_for_latent(6) == 18
+    for i in range(6):
+        assert torch.equal(v1[:, :, i], v0[:, :, i + 5]), f"step {i} of the second clip"
+        assert not torch.equal(v1[:, :, i], v0[:, :, i + 6]), "a different frame gets a different block"
+    assert torch.equal(v1[:, :, 6], v0[:, :, 11])
+    # audio is keyed on its own absolute tick (17 px = round(17 * 40 / 24) = 28 ticks), not on a clip-local index
+    tick = int(round(17 * core.AUDIO_LATENT_FPS / core.FPS))
+    assert tick == 28
+    assert torch.equal(a1[..., 0], a0[..., tick])
+    assert not torch.equal(a1[..., 0], a0[..., 0]), "the old per-clip field restarted every clip at tick 0"
+    assert torch.equal(v0, gen.position_noise(video, audio, 11, 0).unbind()[0]), "same seed, same field"
+    assert not torch.equal(v0, gen.position_noise(video, audio, 12, 0).unbind()[0]), "another seed, another field"
+    assert gen.noise_seed(11, 0, "v") != gen.noise_seed(11, 0, "a"), "the arms must not share a block"
+    assert not torch.equal(v0[:, :, 0], v0[:, :, 1]), "no block is reused inside a stream"
+    assert abs(float(v0.mean())) < 0.05 and 0.9 < float(v0.std()) < 1.1, "still IID normal noise"
+
+
+def test_two_segments_draw_one_noise_field_across_the_seam(patcher, dirs, monkeypatch):
+    """A continued clip gets the noise of the overlapping frames its predecessor used: no DC step on the stitch."""
+    noises = []
+    original = gen.comfy.sample.sample
+
+    def spy(*a, **k):
+        noises.append(a[1])
+        return original(*a, **k)
+
+    monkeypatch.setattr(gen.comfy.sample, "sample", spy)
+    p = project(id="noise")
+    gen.run_project(patcher, FakeClip(), FakeVAE(), p, node_id="noise")
+    assert len(noises) == 2, "one sample call per segment"
+    (v1, a1), (v2, a2) = (n.unbind() for n in noises)
+    it = core.plan(core.normalize_project(p))
+    start = it[1]["start"]
+    assert start == 39 - 22
+    i = [k for k in range(v1.shape[2]) if core.frames_for_latent(k) == start][0]
+    assert torch.equal(v2[:, :, 0], v1[:, :, i]), "clip 2 opens on the noise clip 1 had at that pixel frame"
+    tick = int(round(start * core.AUDIO_LATENT_FPS / core.FPS))
+    assert torch.equal(a2[..., 0], a1[..., tick]), "and on the same absolute audio tick"
+    assert not torch.equal(a2[..., 0], a1[..., 0])
+
+
+def test_the_noise_field_is_one_for_the_film_and_a_own_seed_starts_a_new_one():
+    """The field seed: the film's seed by default, an own seed for a segment (a new take) and its chain."""
+    p = core.normalize_project(project(id="field"))
+    p["settings"]["seed"] = 4242
+    assert core.noise_seed_for(p, 0) == 4242
+    assert core.noise_seed_for(p, 1) == 4242, "a continued clip samples the same field as its predecessor"
+    p["segments"][1]["overrides"] = {"seed": 99}          # «Ещё дубль» on segment 2
+    assert core.noise_seed_for(p, 1) == 99, "its own seed: a new field"
+    p["segments"].append({"id": "s3", "frames": 39, "prompt": "three", "link": "extend"})
+    p = core.normalize_project(p)
+    assert core.noise_seed_for(p, 2) == 99, "the chain continues the new field"
+    p["segments"][2]["link"] = "cut"                       # a new scene: a new field
+    p = core.normalize_project(p)
+    assert core.noise_seed_for(p, 2) == 4242, "a cut breaks the chain"
+    p["settings"]["refine_seed"] = 777
+    assert core.noise_seed_for(p, 0, "refine") == 777, "an independent final-pass seed is its own field"
+    assert core.noise_seed_for(p, 0, "full") == 4242
+
+
 def test_cut_segment_has_no_continuity(patcher, dirs):
     p = project(id="t2")
     p["segments"][1]["link"] = "cut"
