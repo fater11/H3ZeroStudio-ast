@@ -132,11 +132,17 @@ def _seed(model, first, point, box=None):
     coverage = float((mask > .5).float().mean())
     person = _person_mask(first, point)
     if person is not None:
-        ref = torch.from_numpy(person).to(mask.device)
-        covered = float(((mask[0] > .5) & (ref > .5)).sum()) / max(1.0, float((ref > .5).sum()))
-        if covered < .45:
+        ref = person > .5
+        sam = (mask[0] > .5).numpy()
+        inside = float((sam & ref).sum()) / max(1.0, float(ref.sum()))
+        if inside < .45:
             # SAM grabbed a part of the figure (a face, a hand): keep the whole person instead
-            return ref[None]
+            return torch.from_numpy(person)[None]
+        spill = float((sam & ~ref).mean())   # share of the frame SAM put outside the person
+        if spill > .02:
+            # a point on a big, textureless close-up spreads onto the background and the glasses:
+            # clip the seed to the person so only the person is ever replaced
+            return torch.from_numpy((sam & ref).astype("float32"))[None]
     if not 0.002 <= coverage <= 0.85:
         raise ValueError("SAM 3.1 не смог выделить выбранного человека. Попробуйте другой кадр или отключите маску.")
     if area is not None and coverage < area * .16:

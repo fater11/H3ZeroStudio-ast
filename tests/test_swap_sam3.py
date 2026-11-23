@@ -209,11 +209,49 @@ def test_sam_person_bbox_overrides_jacket_click(monkeypatch):
     mask = sm._seed(object(), frame, [.4, .5], [.1, .2, .5, .6])
     assert mask.shape == (1, 80, 60)
     assert recorder["bboxes"] == {"x": 6, "y": 16, "width": 30, "height": 48}
-    assert "positive_coords" not in recorder
+    # the click and the box are sent together: the click anchors the object, the box bounds it
+    assert "positive_coords" in recorder
 
     recorder.clear()
     sm._seed(object(), frame, [.4, .5])
     assert "positive_coords" in recorder and "bboxes" not in recorder
+
+
+def test_seed_clips_a_spill_onto_the_background(monkeypatch):
+    """A point on a big close-up spreads outside the person — the seed must stay inside the person."""
+    class Detect:
+        @classmethod
+        def execute(cls, model, image, **kwargs):
+            result = torch.zeros(1, image.shape[1], image.shape[2])
+            result[:, 10:70, 5:55] = 1     # the whole frame almost: a spill
+            return (result,)
+    fake = types.ModuleType("comfy_extras.nodes_sam3")
+    fake.SAM3_Detect = Detect
+    monkeypatch.setitem(sys.modules, "comfy_extras.nodes_sam3", fake)
+    person = np.zeros((80, 60), dtype=np.float32)
+    person[20:60, 15:45] = 1
+    monkeypatch.setattr(sm, "_person_mask", lambda first, point: person)
+    mask = sm._seed(object(), np.zeros((80, 60, 3), dtype=np.float32), [.5, .5])[0].numpy() > .5
+    assert not mask[:, :14].any() and not mask[:19].any(), "nothing outside the person"
+    assert mask[30:50, 20:40].all(), "the person stays selected"
+
+
+def test_seed_replaces_a_fragment_with_the_whole_person(monkeypatch):
+    """SAM grabbing a face or a hand must give way to the YOLO person mask."""
+    class Detect:
+        @classmethod
+        def execute(cls, model, image, **kwargs):
+            result = torch.zeros(1, image.shape[1], image.shape[2])
+            result[:, 22:34, 20:32] = 1     # a small part of the figure
+            return (result,)
+    fake = types.ModuleType("comfy_extras.nodes_sam3")
+    fake.SAM3_Detect = Detect
+    monkeypatch.setitem(sys.modules, "comfy_extras.nodes_sam3", fake)
+    person = np.zeros((80, 60), dtype=np.float32)
+    person[20:60, 15:45] = 1
+    monkeypatch.setattr(sm, "_person_mask", lambda first, point: person)
+    mask = sm._seed(object(), np.zeros((80, 60, 3), dtype=np.float32), [.5, .5])[0].numpy() > .5
+    assert mask[20:60, 15:45].all(), "the whole person instead of a fragment"
 
 
 def test_sam_rejects_partial_person_mask(monkeypatch):
