@@ -310,14 +310,23 @@ CARD_LOOK_PHRASE = {
     "voice": "Use {label} as a reference.",
 }
 CARD_VOICE_PHRASE = "{label} is {whose} voice timbre reference."
-# Character swap on footage: the source clip drives pose/camera/lighting, the character card is the appearance.
-# Adapted from the BFS H3 image-swap brief: an explicit "who changes / what is kept / what is transferred"
-# beats a bare reference line — the model replaces the person instead of just "considering" the picture.
-SWAP_BRIEF = ("character_swap: replace the person in the source video with {pics}: take the face, hair, skin tone, "
-              "body proportions and the complete outfit from {pics}; keep the source pose, hand positions, head "
-              "orientation, gaze, facial expression, camera movement, framing, lighting and shadows; keep the "
-              "background, the other people and the held objects exactly as in the source video; do not copy the "
-              "pose or the lighting of {pics}; do not retain the original person's identity or clothing.")
+# Character swap on footage: the source clip (the guide) drives pose, motion, camera and light; the character
+# card is the appearance. This is the brief of the reference minimax_h3_character_swap_v1.1 workflow: an explicit
+# "who changes / what is kept / what is transferred" makes the model replace the person instead of merely
+# "considering" the picture. {details} comes from the card's appearance, {pics} from its pictures.
+SWAP_BRIEF = ("body_swap: subject_definitions: <Subject 1> is the {details} shown in {pics}, whose identity, face, "
+              "head, hair or fur, skin, body shape, proportions and clothing define the character in the target "
+              "video. The guide video provides the scene and the performance: its background, environment, "
+              "lighting, camera, framing, body pose, hand and arm movement, head rotation, gaze direction, lip "
+              "movement and facial expression, frame by frame; only the main subject of the guide video is "
+              "replaced: its face, hair, body and clothing become <Subject 1>. summary: [video generation + "
+              "reference] Replace the guide subject with <Subject 1>, keeping the scene, camera and the complete "
+              "motion and performance of the guide video. detailed_description: [Shot 1] <Subject 1> takes the "
+              "exact place of the guide subject and moves with the same timing, body pose, gestures, head motion, "
+              "gaze, speech and facial expressions, while keeping the complete identity from {pics}: facial "
+              "structure, hair or fur, skin, body shape and clothing stay stable in every frame. The background, "
+              "lighting, colors and camera of the guide video are preserved. Prevent identity drift, clothing "
+              "changes, texture crawling and flicker.")
 CARD_SNAP_KEYS = ("name", "sig", "concept", "vkind", "audio", "tokens", "subject_name", "appearance", "retained_attributes", "voice_description")
 OVERRIDE_KEYS = ("seed", "refine_seed", "steps", "cfg", "denoise", "sampler", "scheduler", "sigmas", "shift_video", "shift_audio")
 # «custom SIGMAS» (a scheduler select item): the companion text field holds the exact schedule
@@ -1709,12 +1718,14 @@ def compose_prompt(project, index, video=True, identity_image_ids=()):
         text = (text + "\n" if text else "") + "\n".join(cl)
     # A swap on footage: name who changes and what is kept (the source clip drives pose/camera/lighting).
     src_ = seg.get("source") or {}
-    if src_.get("swap") and not kfm and "character_swap" not in text.lower():
-        pics_used = sorted({n for r in card_labels(project, seg, index, video=video,
-                                                   identity_image_ids=identity_image_ids) for n in r["image"][:1]})
+    if src_.get("swap") and not kfm and "body_swap" not in text.lower() and "character_swap" not in text.lower():
+        labels = card_labels(project, seg, index, video=video, identity_image_ids=identity_image_ids)
+        pics_used = sorted({n for r in labels for n in r["image"][:1]})
         if pics_used:
+            details = next((str((r["snap"].get("appearance") or "")).strip() for r in labels
+                            if str((r["snap"].get("appearance") or "")).strip()), "") or "the character"
             text = (text + "\n" if text else "") + SWAP_BRIEF.replace(
-                "{pics}", ", ".join(f"<Picture {n}>" for n in pics_used))
+                "{pics}", ", ".join(f"<Picture {n}>" for n in pics_used)).replace("{details}", details)
     if not video:
         text = re.sub(r"[ \t]*<Video\s*\d+>", "", text)
         text = re.sub(r"[ \t]+\n", "\n", text).strip()
