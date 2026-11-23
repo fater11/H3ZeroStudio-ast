@@ -2928,6 +2928,7 @@ export default {
   "2 шага · max_raw_t 0.930": "2 steps · max_raw_t 0.930",
   "4 шага · max_raw_t 0.960": "4 steps · max_raw_t 0.960",
   "Адаптер DWD (LoRA)": "DWD adapter (LoRA)",
+  "Файл адаптера pi-H3 DWD: список из всех папок loras": "pi-H3 DWD adapter file: a list from every loras folder",
   "Выбрать файл адаптера pi-H3 DWD: он может лежать в любой папке loras": "Choose the pi-H3 DWD adapter file: it can live in any loras folder",
   "авто · встроенное имя для {0} шагов": "auto · built-in name for {0} steps",
   "Вернуть встроенное имя файла": "Back to the built-in file name",

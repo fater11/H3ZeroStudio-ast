@@ -805,11 +805,15 @@ export function installSettings(Editor, { C, h, ICON }) {
           this.field(T("Шаги pi-H3"), h("div", { class: "h3l-pills" },
             pill(g.piflow_steps !== 4, "2", T("2 шага · max_raw_t 0.930"), () => this.setPiSteps(2)),
             pill(g.piflow_steps === 4, "4", T("4 шага · max_raw_t 0.960"), () => this.setPiSteps(4)))),
-          this.field(T("Адаптер DWD (LoRA)"), h("div", { class: "h3l-row" },
-            h("button", { type: "button", class: "h3l-btn sm", title: T("Выбрать файл адаптера pi-H3 DWD: он может лежать в любой папке loras"),
-              onclick: (ev) => this.mpLoraPicker(ev.currentTarget, g.piflow_lora || "", (f) => set("piflow_lora", f)) },
-              g.piflow_lora ? g.piflow_lora.split(/[\\/]/).pop() : T("авто · встроенное имя для {0} шагов", g.piflow_steps === 4 ? 4 : 2)),
-            g.piflow_lora ? h("button", { type: "button", class: "h3l-btn sm", title: T("Вернуть встроенное имя файла"), onclick: () => set("piflow_lora", "") }, "✕") : null))) : null,
+          this.field(T("Адаптер DWD (LoRA)"), (() => {
+            const loras = (this._mp?.files?.lora || []).slice().sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+            const sel = h("select", { class: "h3l-sel", title: T("Файл адаптера pi-H3 DWD: список из всех папок loras") },
+              h("option", { value: "", selected: !g.piflow_lora }, T("авто · встроенное имя для {0} шагов", g.piflow_steps === 4 ? 4 : 2)),
+              ...loras.map((f) => h("option", { value: f, selected: f === g.piflow_lora }, f)),
+              g.piflow_lora && !loras.includes(g.piflow_lora) ? h("option", { value: g.piflow_lora, selected: true }, g.piflow_lora) : null);
+            sel.onchange = () => set("piflow_lora", sel.value);
+            return sel;
+          })())) : null,
         !uiPi ? h("details", { class: "h3l-gen-manage" }, h("summary", null, T("Быстрые сценарии и эксперименты")),
           h("div", { class: "h3l-row wrap" },
             h("button", { type: "button", class: "h3l-btn sm",
