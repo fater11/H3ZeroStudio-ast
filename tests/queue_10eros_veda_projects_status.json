@@ -1,0 +1,23 @@
+{
+  "q_dance_10eros_pi2_veda_20261123": {
+    "saved": true,
+    "segments": 6,
+    "steps": 2,
+    "veda": true,
+    "prompt_id": "08bdd854-26ba-43d2-8414-9131b9bd2b12"
+  },
+  "q_dance_10eros_pi4_veda_20261123": {
+    "saved": true,
+    "segments": 6,
+    "steps": 4,
+    "veda": true,
+    "prompt_id": "9ea0f8ef-01e9-441c-a4cd-cc16df1b2deb"
+  },
+  "q_kotel_v2_10eros_pi4_veda_20261123": {
+    "saved": true,
+    "segments": 26,
+    "steps": 4,
+    "veda": true,
+    "prompt_id": "8c147893-2bb4-4696-95af-b5a841998785"
+  }
+}

@@ -1,0 +1,77 @@
+[
+  {
+    "model": "10eros",
+    "mode": "dense",
+    "seconds": 10,
+    "frames": 243,
+    "prompt_id": "93736257-7539-4ac7-ab82-e9dbdc915c7c",
+    "status": "success",
+    "started": 1795381384.427548,
+    "runtime_s": 263.4,
+    "outputs": 1
+  },
+  {
+    "model": "b25",
+    "mode": "dense",
+    "seconds": 10,
+    "frames": 243,
+    "prompt_id": "95fcf708-f9f3-4432-81cf-e069ce12961e",
+    "status": "success",
+    "started": 1795381666.0083451,
+    "runtime_s": 242.19,
+    "outputs": 1
+  },
+  {
+    "model": "10eros",
+    "mode": "veda",
+    "seconds": 10,
+    "frames": 243,
+    "prompt_id": "1617998c-f72a-44eb-ae0f-023068430f7b",
+    "status": "success",
+    "started": 1795381927.436001,
+    "runtime_s": 210.22,
+    "outputs": 1
+  },
+  {
+    "model": "b25",
+    "mode": "veda",
+    "seconds": 10,
+    "frames": 243,
+    "prompt_id": "22f5f9cc-6ba3-4f06-91c0-a0f86b8ac652",
+    "status": "success",
+    "started": 1795382147.9183893,
+    "runtime_s": 200.05,
+    "outputs": 1
+  },
+  {
+    "model": "10eros",
+    "mode": "dense",
+    "seconds": 15,
+    "frames": 362,
+    "prompt_id": "127a2e9a-e1c7-470f-b175-771a4f0eddb4",
+    "status": "success",
+    "started": 1795382348.151521,
+    "runtime_s": 428.33,
+    "outputs": 1
+  },
+  {
+    "model": "b25",
+    "mode": "dense",
+    "seconds": 15,
+    "frames": 362,
+    "prompt_id": "324f323b-8b14-4567-b8ab-d54e14291522",
+    "status": "timeout",
+    "started": 1795382790.554808
+  },
+  {
+    "model": "10eros",
+    "mode": "veda",
+    "seconds": 15,
+    "frames": 362,
+    "prompt_id": "98fdfb31-f526-4b1d-90b9-c991c6f35d91",
+    "status": "success",
+    "started": 1795398835.9170125,
+    "runtime_s": 240.77,
+    "outputs": 1
+  }
+]

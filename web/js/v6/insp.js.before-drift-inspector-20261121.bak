@@ -1,0 +1,401 @@
+// H3ZeroStudio Lab v6 — Inspector: two tabs («Отрезок» / «Ролик»), native sections, engine blocks only for
+// deep features (takes, upscale, model preset, per-shot sampler overrides, footage, character cards).
+import { T, plural } from "../h3s_i18n.js";
+import { I, btn, seg, sw, slider, field, section, setTip, popover, closePopover, empty } from "./kit.js";
+import { lsGet, lsSet, secs } from "./studio.js";
+
+const CAT1 = () => ({ character: T("Персонаж"), location: T("Локация"), other: T("Другое"), audio: T("Аудио"), video: T("Видео") });
+const SEAM = () => ({ ok: T("шов незаметен"), soft: T("лёгкий скачок"), hard: T("резкий шов") });
+
+export function installInspector(Studio, { C, h, PALETTE }) {
+  const dis = (ed, id, title, kids, open = false) => {
+    const st = lsGet("dis", {}); const d = h("details", { class: "v6-dis", open: id in st ? !!st[id] : open || null },
+      h("summary", null, h("i", { class: "v6-ic v6-dis-c", html: I.chevR }), h("span", null, title)), h("div", { class: "v6-dis-b" }, kids));
+    d.addEventListener("toggle", () => { const s = lsGet("dis", {}); s[id] = d.open; lsSet("dis", s); });
+    return d;
+  };
+  const grad = (pal) => `linear-gradient(135deg,${pal[0]},${pal[1]})`;
+
+  Object.assign(Studio.prototype, {
+    renderInspector() {
+      const I0 = this.$.insp; if (!I0) return;
+      if (this.selMarker && !this.marker?.()) this.selMarker = null;
+      if (this.selTrack && !this.atrkState?.().list.some((t) => t.id === this.selTrack)) this.selTrack = null;
+      if (this.selCtl && !this.ctlClip?.(this.selCtl)) this.selCtl = null;
+      const key = (this.selCtl || "") + "|" + (this.selMarker || "") + "|" + (this.selTrack || "") + "|" + (this.selAudio || "") + "|" + (this.seg()?.id ?? "") + "|" + this.inspTab;
+      const body0 = I0.querySelector(".v6-insp-b"), top = key === this._inspKey && body0 ? body0.scrollTop : 0;
+      const snap = key === this._inspKey && body0 ? this.uiSnap(body0) : null;
+      this._inspKey = key;
+      this.$.finalBox = null; this.$.segPrompt = null;
+      I0.innerHTML = "";
+      const tabs = seg([{ value: "seg", label: T("Отрезок") }, { value: "proj", label: T("Ролик") }], this.inspTab, (v) => { this.inspTab = v; this.renderInspector(); }, { full: true, label: T("Инспектор") });
+      const body = h("div", { class: "v6-insp-b" });
+      I0.append(h("div", { class: "v6-insp-h" }, tabs), body);
+      try {
+        if (this.inspTab === "proj") this.inspProject(body);
+        else {
+          // one focused document: a marker, an audio track or an audio clip replaces the segment inspector (× returns to it)
+          let ctx = null;
+          if (this.selCtl) { const cid = this.selCtl, cc = this.ctlCard?.(); if (cc) ctx = this.ctxCard(T("Клип ControlNet"), cc, () => { this.selCtl = null; this.renderAll(); },
+            btn({ icon: I.trash, size: "sm", kind: "danger", cls: "v6-ctx-del", tip: T("Удалить клип"), key: "Del", onclick: () => this.ctlDelete(cid) })); }
+          if (ctx) {}
+          else if (this.selMarker) { const mid = this.selMarker; ctx = this.ctxCard(T("Маркер"), this.markerCard(), () => { this.selMarker = null; this.renderAll(); },
+            btn({ icon: I.trash, size: "sm", kind: "danger", cls: "v6-ctx-del", tip: T("Удалить маркер"), key: "Del", onclick: () => this.deleteMarker(mid) })); }
+          else if (this.selTrack) { const tc = this.atrkCard?.(this.selTrack); if (tc) ctx = this.ctxCard(T("Аудиодорожка"), tc, () => { this.selTrack = null; this.renderAll(); }); }
+          else { const ac = this.audioClipCard?.(); if (ac) ctx = this.ctxCard(T("Аудиоклип"), ac, () => { this.selAudio = null; this.renderAll(); }); }
+          if (ctx) body.append(ctx);
+          else if (this.sel >= 0 && this.seg()) this.inspSegment(body);
+          else body.append(empty(I.film, T("Нет отрезков"), null, T("Ролик собирается из отрезков на таймлайне")));
+        }
+      } catch (e) { console.error("[H3 Lab v6] inspector", e); body.append(h("p", { class: "v6-err" }, String(e?.message || e))); }
+      body.scrollTop = top; if (snap) this.uiRestore(body, snap);
+      // scroll hint: a soft fade at the bottom edge while more content is below
+      const hint = () => body.classList.toggle("has-more", body.scrollHeight - body.scrollTop - body.clientHeight > 4);
+      body.addEventListener("scroll", hint, { passive: true });
+      requestAnimationFrame(hint);
+      try { new ResizeObserver(hint).observe(body); } catch {}
+    },
+    ctxCard(title, el, onClose, extra = null) {
+      return h("div", { class: "v6-ctx" }, h("header", { class: "v6-sec-h" }, h("h3", null, title), h("i", { class: "v6-grow" }), extra, btn({ icon: I.close, size: "sm", tip: T("Закрыть"), onclick: onClose })), el);
+    },
+
+    // ---------------------------------------------------------------- «Отрезок»
+    inspSegment(body) {
+      const i = this.sel, s = this.seg(), it = this.items()[i], pal = PALETTE[s.color % PALETTE.length], n = this.p.segments.length;
+      // header
+      const dot = h("button", { type: "button", class: "v6-sdot", style: { background: grad(pal) }, "aria-label": T("Цвет отрезка") });
+      setTip(dot, T("Цвет отрезка"));
+      dot.onclick = () => popover(this.root, dot, h("div", { class: "v6-pop-pad v6-colors" }, PALETTE.slice(0, 8).map((c, ci) => {
+        const b = h("button", { type: "button", class: "v6-cdot" + (s.color % PALETTE.length === ci ? " on" : ""), style: { background: grad(c) }, "aria-label": T("Цвет {0}", ci + 1) });
+        b.onclick = () => { closePopover(); this.mutate((p) => { p.segments[i].color = ci; }); }; return b; })), { width: 0 });
+      const name = h("input", { class: "v6-sname", value: (s.name || "").replace(/^Отрезок \d+$/, ""), placeholder: T("Отрезок {0}", i + 1), spellcheck: "false", "aria-label": T("Название отрезка") });
+      name.oninput = () => this.mutate((p) => { p.segments[i].name = name.value; }, { coalesce: "name" + s.id, render: "light" });
+      name.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") name.blur(); });
+      const more = btn({ icon: I.more, size: "sm", tip: T("Действия с отрезком"), onclick: (e, b) => { const r = b.getBoundingClientRect(); this.clipMenu({ clientX: r.left, clientY: r.bottom + 4, preventDefault() {}, stopPropagation() {} }, i); } });
+      body.append(h("div", { class: "v6-shead" }, dot, name, h("span", { class: "v6-cnt" }, `${i + 1} / ${n}`), more));
+      body.append(this.v6Status(i));
+      let trackEl = null;
+      { const L = this.trkLayout?.(); if (L && L.nv > 1) {
+        const opts = Array.from({ length: L.nv }, (_, k) => ({ value: String(k), label: "V" + (k + 1), tip: this.trkName("v" + (k + 1)) }));
+        trackEl = h("div", { class: "v6-fld v6-fld-col" }, h("span", { class: "v6-lbl" }, T("Дорожка")), seg(opts, String(this.trkOf(i)), (v) => this.setSegTrack(i, Number(v)), { size: "sm", full: true, label: T("Дорожка") })); setTip(trackEl.firstChild, T("Дорожка не влияет на порядок генерации: пересечение с соседним отрезком — это окно перекрытия")); } }
+
+      // prompt
+      const ta = h("textarea", { class: "v6-ta", placeholder: T("Что происходит: действие, камера, звук. Референсы — <Picture N>"), spellcheck: "false" });
+      ta.value = s.prompt || "";
+      const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight + 2, 360) + "px"; };
+      ta.oninput = () => { grow(); this.mutate((p) => { p.segments[i].prompt = ta.value; }, { coalesce: "prompt" + s.id, render: "light" }); };
+      ta.addEventListener("keydown", (e) => e.stopPropagation());
+      requestAnimationFrame(grow);
+      this.$.segPrompt = ta;
+      const segId = s.id;
+      const pe = btn({ label: T("Редактор"), size: "sm", tip: T("Редактор промпта: поиск, ссылки на референсы, подсказки по структуре"), onclick: () => {
+        const k = this.p.segments.findIndex((x) => x.id === segId), sg = this.p.segments[k];
+        this.openPromptEditor({ title: T("Промпт отрезка {0}", k + 1) + (sg?.name ? ` «${sg.name}»` : ""), value: sg?.prompt ?? "", ctx: { kind: "seg", seg: k }, placeholder: ta.placeholder,
+          apply: (t) => this.mutate((p) => { const x = p.segments.find((y) => y.id === segId); if (x) x.prompt = t; }) }); } });
+      body.append(section(T("Промпт"), pe, ta));
+
+      // duration
+      const kMin = Math.max(1, i > 0 && it.overlap ? (it.overlap - 5) / 17 + 1 : 1), kMax = (C.MAX_FRAMES - 5) / 17;
+      const val = h("span", { class: "v6-val" });
+      const paint = (f) => { val.textContent = secs(f); setTip(val, T("{0} кадров", f)); };
+      paint(s.frames);
+      const rng = slider({ min: kMin, max: kMax, step: 1, value: (s.frames - 5) / 17, onInput: (k) => { const f = 17 * k + 5; paint(f); quick.set(String(f)); this.mutate((p) => { p.segments[i].frames = f; }, { coalesce: "dur" + s.id, render: "light" }); }, onChange: () => this.renderInspector() });
+      const qs = [3, 5, 8, 10, 12, 15].map((sec) => { const f = Math.max(C.snapFrames(sec * 24), 17 * kMin + 5); return { value: String(f), label: T("{0} с", sec), tip: T("{0} кадров", f) }; });
+      const quick = seg(qs, String(s.frames), (v) => this.mutate((p) => { p.segments[i].frames = Number(v); }), { size: "sm", full: true, label: T("Быстрый выбор длительности") });
+      const warn = s.frames < C.TRAINED_MIN_FRAMES || s.frames > C.TRAINED_MAX_FRAMES;
+      body.append(section(T("Длительность"), val, h("div", { class: "v6-sl" }, rng), quick,
+        warn ? h("p", { class: "v6-note is-warn" }, T("Вне обучающего диапазона H3 ({0}–{1} с) — качество может падать", (C.TRAINED_MIN_FRAMES / 24).toFixed(1), (C.TRAINED_MAX_FRAMES / 24).toFixed(1))) : null));
+
+      // continuity
+      if (i === 0) body.append(section(T("Связь"), null, h("p", { class: "v6-note" }, T("Первый отрезок начинает ролик — продолжать пока нечего")), trackEl));
+      else {
+        const kfFirst = !!C.kfAssets?.(this.p, s)?.[0];   // v6h: an explicit first frame replaces the continuation
+        // v6i/v6j: with a first frame the clip starts as a new scene — «Продолжение» disabled, «Новая сцена» active; the note below explains (no duplicate tooltip)
+        const KF_CUT = T("С первым кадром клип начинается как новая сцена. Чтобы продолжить предыдущий клип, оставьте только последний кадр.");
+        const link = seg([{ value: "extend", label: T("Продолжение"), tip: kfFirst ? "" : T("Продолжает предыдущий отрезок: общий хвост и последний кадр как референс"), disabled: kfFirst }, { value: "cut", label: T("Новая сцена"), tip: T("Монтажная склейка, без связи с предыдущим") }],
+          kfFirst ? "cut" : s.link === "extend" && !s.gap ? "extend" : "cut", (v) => { if (kfFirst) return; this.mutate((p) => { p.segments[i].link = v; if (v === "extend") p.segments[i].gap = 0; }); }, { full: true, label: T("Связь с предыдущим"), cls: kfFirst ? "is-kf-first" : "" });
+        const cap = kfFirst ? KF_CUT : s.gap ? T("Пауза {0} кадр. перед отрезком", s.gap) : s.link === "extend" ? (it.overlap ? T("Общий хвост {0} кадр. ≈ {1} с", it.overlap, (it.overlap / C.FPS).toFixed(2)) : T("Только последний кадр")) : T("Монтажная склейка");
+        const kids = [link, h("p", { class: "v6-note" }, cap)];
+        const ov = this.ovInfo?.(i);
+        if (ov) { const box = h("div", { class: "v6-ovinfo is-" + ov.state }, h("i", { class: "v6-ovinfo-sw" }),
+          h("div", null, h("b", null, ov.state === "layer" ? T("Наложение {0} с", ov.sec.toFixed(2)) : T("Окно перекрытия {0} с", ov.sec.toFixed(2))), h("span", null, this.ovText(ov)))); kids.splice(1, 1, box); }
+        const sq = this.seamQ(i);
+        if (sq) { const p = h("p", { class: "v6-seam is-" + sq.verdict }, h("i"), T("Стык {0}→{1}: {2}", i, i + 1, SEAM()[sq.verdict])); setTip(p, this.seamTip(i, sq)); kids.push(p); }
+        if (s.link === "extend" && !s.gap && !C.isFootage(s) && !kfFirst) {
+          const gO = C.wantedOverlap({ settings: this.p.settings, segments: [{ overlap_blocks: -1 }] }, 0);
+          const opts = [{ value: "-1", label: T("По умолчанию") }, { value: "-2", label: "Hard Cut · 0 s" }, ...Array.from({ length: C.MAX_OVERLAP_BLOCKS + 1 }, (_, o) => ({ value: String(o), label: this.ovLabel(o) }))];
+          kids.push(h("div", { class: "v6-fld" }, h("span", { class: "v6-lbl" }, T("Перекрытие")), this.themedSelect({ value: String(s.overlap_blocks ?? -1), options: opts, sm: true, onChange: (v) => this.setSegOverlap(i, Number(v)) })));
+        }
+        if (s.gap) {
+          const g = field({ type: "number", value: s.gap || 0, min: 0, max: C.MAX_GAP, width: "72px", onChange: (v) => this.mutate((p) => { p.segments[i].gap = Math.max(0, Math.min(C.MAX_GAP, Math.round(+v || 0))); }) });
+          g.addEventListener("keydown", (e) => e.stopPropagation());
+          kids.push(h("div", { class: "v6-fld" }, h("span", { class: "v6-lbl" }, T("Пауза, кадров")), g));
+        }
+        if (trackEl) kids.push(trackEl);
+        body.append(section(T("Связь"), null, ...kids));
+      }
+      if (s.source) body.append(section(T("Футаж"), null, this.footageBlock(i)));
+
+      // v6h «Кадры» (i2v / FLF), then references + characters
+      { const kf = this.inspFrames?.(i, s); if (kf) body.append(kf); }
+      { const rf = this.inspRefs(i, s); if (rf) body.append(rf); }
+
+      // versions
+      const tb = this.takesBlock?.(i), fb = this.finalBlock?.(i);
+      if ((s.takes || []).length || fb) {
+        // the engine block repeats the title ("Дубли") and the generate button the status row already has
+        let count = null;
+        const lbl = tb?.querySelector?.(":scope > .h3l-lbl");
+        if (lbl) { const em = lbl.querySelector("em"); const t = (em?.textContent || "").split(" · ")[0].trim(); if (t) count = h("span", { class: "v6-cap" }, t); lbl.remove(); }
+        tb?.querySelector?.(".h3l-btn.primary")?.remove();
+        body.append(section(T("Версии"), count, tb, fb));
+      }
+
+      // rarely used
+      body.append(dis(this, "seg-up", T("Апскейл отрезка"), [this.upscaleBlock?.(i)].filter(Boolean)));
+      body.append(dis(this, "seg-adv", T("Свои параметры"), [this.mpSegBlock?.(i), this.overridesBlock?.(i)].filter(Boolean)));
+    },
+
+    v6Status(i) {
+      const s = this.seg(i), r = s.result, stale = !!(r && this.isStale(i)), st = this.segGenState?.(i) || { ok: true };
+      const state = !r ? "none" : stale ? "stale" : "ok";
+      const label = !r ? T("Ещё не создан") : stale ? T("Изменён — пересоздастся") : r.cached ? T("Готов · из кэша") : T("Готов");
+      const row = h("div", { class: "v6-status is-" + state, "data-i": i, "data-stale": r ? String(stale) : "-" },
+        h("span", { class: "v6-status-d" }), h("span", { class: "v6-status-t" }, label));
+      if (!this.run.active) {
+        if (state !== "ok") row.append(btn({ icon: I.spark, label: T("Создать"), size: "sm", kind: "tinted", disabled: !st.ok, tip: st.ok ? T("Сгенерировать только этот отрезок") : st.why || "", onclick: () => this.genSegment(i) }));
+        if (r) row.append(btn({ icon: I.dice, size: "sm", tip: T("Ещё дубль с новым сидом"), disabled: !st.ok, onclick: () => this.newTake(i) }));
+      }
+      if (r?.video && !stale) row.append(btn({ icon: I.play, size: "sm", tip: T("Смотреть отрезок"), onclick: () => { this.pvMode = "segment"; this.renderPreview(); } }));
+      const wrap = h("div", { class: "v6-status-w", "data-i": i, "data-stale": r ? String(stale) : "-" }, row);
+      if (stale && this.restoreTake?.(i)) {
+        const panel = h("div", { class: "h3l-rs-host" });
+        row.append(btn({ label: T("Вернуть"), size: "sm", tip: T("Показать, что изменилось, и вернуть прежние значения — без перегенерации"), onclick: () => (panel.childNodes.length ? panel.replaceChildren() : this.restorePanel(i, panel)) }));
+        wrap.append(panel);
+      }
+      return wrap;
+    },
+    refreshStatus() {
+      for (const el of this.root?.querySelectorAll(".v6-status-w") || []) {
+        const i = Number(el.dataset.i), r = this.seg(i)?.result;
+        const now = r ? String(!!this.isStale(i)) : "-";
+        if (now !== el.dataset.stale) el.replaceWith(this.v6Status(i));
+      }
+    },
+
+    inspRefs(i, s) {
+      const refs = C.orderedRefs(this.p, s), arefs = C.audioRefs(this.p, s), cp = C.continuityPicture(this.p, i);
+      const grid = h("div", { class: "v6-refs" });
+      refs.forEach((a, n) => {
+        const t = h("div", { class: "v6-ref", draggable: "false" }, h("img", { src: this.assetUrl(a), alt: "", draggable: "false" }), h("span", { class: "v6-ref-tag" }, `${n + 1}`));
+        setTip(t, T("{0} · {1} — клик вставит <Picture {2}>", a.name, CAT1()[a.category] || "", n + 1));
+        const x = h("button", { type: "button", class: "v6-ref-x", "aria-label": T("Убрать"), html: I.close });
+        x.onclick = (e) => { e.stopPropagation(); this.toggleRef(i, a.id); };
+        t.append(x);
+        t.onclick = () => this.insertTag(`<Picture ${n + 1}>`);
+        t.ondblclick = (e) => { e.stopPropagation(); this.openAssetEditor(a.id); };
+        t.oncontextmenu = (e) => this.assetMenu(e, a);
+        grid.append(t);
+      });
+      if (cp) { const t = h("div", { class: "v6-ref is-auto" }, h("i", { class: "v6-ic", html: I.link }), h("span", { class: "v6-ref-tag" }, `${cp}`)); setTip(t, T("Последний кадр отрезка {0} добавляется автоматически", i)); grid.append(t); }
+      arefs.forEach((a, n) => {
+        const t = h("div", { class: "v6-ref is-aud" + (n >= C.MAX_REF_AUDIOS ? " is-over" : "") }, h("i", { class: "v6-ic", html: I.wave }), h("span", { class: "v6-ref-tag" }, `A${n + 1}`));
+        setTip(t, T("Аудио «{0}» — клик вставит <Audio {1}>", a.name, n + 1));
+        const x = h("button", { type: "button", class: "v6-ref-x", "aria-label": T("Убрать"), html: I.close }); x.onclick = (e) => { e.stopPropagation(); this.toggleRef(i, a.id); }; t.append(x);
+        t.onclick = () => this.insertTag(`<Audio ${n + 1}>`); t.oncontextmenu = (e) => this.assetMenu(e, a);
+        grid.append(t);
+      });
+      const vbox = h("div", { class: "v6-vrefs" }); const nVid = this.videoRefChips?.(i, vbox) || 0;
+      const add = h("button", { type: "button", class: "v6-ref is-add", "aria-label": T("Добавить референс") }, h("i", { class: "v6-ic", html: I.plus }));
+      setTip(add, T("Добавить из медиатеки или с компьютера"));
+      add.onclick = () => this.refPicker(add, i);
+      grid.append(add);
+      grid.addEventListener("dragover", (e) => { e.preventDefault(); grid.classList.add("is-over"); });
+      grid.addEventListener("dragleave", () => grid.classList.remove("is-over"));
+      grid.addEventListener("drop", (e) => { grid.classList.remove("is-over"); const id = e.dataTransfer.getData("application/x-h3s-asset"); const cid = e.dataTransfer.getData("application/x-h3s-card");
+        if (id) { e.preventDefault(); this.addRef(i, id); } else if (cid) { e.preventDefault(); this.charAdd({ seg: i }, cid); } });
+      const nRefs = refs.length + (cp ? 1 : 0);
+      const cnt = h("span", { class: "v6-cap" + (nRefs > C.MAX_REF_IMAGES ? " is-err" : "") }, T("{0} из {1}", nRefs, C.MAX_REF_IMAGES));
+      // character cards: shown only when the segment has some (adding goes through the «+» picker)
+      let cards = null;
+      if (this.seg(i)?.cards?.length) { cards = this.charChips?.({ seg: i }); cards?.querySelector(":scope > .h3l-lbl")?.remove(); cards?.querySelector(".h3l-crefs > select.h3l-sel")?.remove(); }
+      return section(T("Референсы"), cnt, grid, nVid ? vbox : null, cards ? h("div", { class: "v6-cards" }, h("span", { class: "v6-lbl" }, T("Персонажи")), cards) : null);
+    },
+
+    /** «+» in the references: library media + character cards, search, upload. Items are draggable too. */
+    refPicker(anchor, i) {
+      this.charsEnsure?.();
+      let tab = this._pickTab || "media", q = "";
+      const fileIn = h("input", { type: "file", accept: "image/*,audio/*,video/*", multiple: true, hidden: true });
+      fileIn.onchange = async () => { const fs = [...fileIn.files]; fileIn.value = ""; const before = new Set(this.p.assets.map((a) => a.id)); await this.uploadFiles(fs);
+        for (const a of this.p.assets) if (!before.has(a.id) && a.category !== "video") this.addRef(i, a.id); closePopover(); };
+      const list = h("div", { class: "v6-pick-l" });
+      const fill = () => {
+        list.innerHTML = "";
+        const s = this.seg(i); if (!s) return;
+        if (tab === "media") {
+          const items = this.p.assets.filter((a) => !q || (a.name || "").toLowerCase().includes(q));
+          if (!items.length) { list.append(empty(I.image, this.p.assets.length ? T("Ничего не найдено") : T("В проекте пока нет медиа"), btn({ icon: I.upload, label: T("Загрузить…"), kind: "tinted", size: "sm", onclick: () => fileIn.click() }))); return; }
+          for (const a of items) {
+            const on = s.refs.includes(a.id), kind = a.category === "audio" ? "aud" : a.category === "video" ? "vid" : "img";
+            if (kind === "vid" && !a.poster) this.videoStrip?.(a);   // older projects: poster arrives later → onAssetMeta refreshes the list
+            const tile = h("button", { type: "button", class: "v6-pick-it" + (on ? " on" : ""), draggable: "true" },
+              kind === "img" ? h("img", { src: this.assetUrl(a), alt: "", loading: "lazy", draggable: "false" })
+                : kind === "vid" && a.poster && this.posterUrl ? h("img", { src: this.posterUrl(a), alt: "", loading: "lazy", draggable: "false" })
+                : h("i", { class: "v6-ic", html: kind === "aud" ? I.wave : I.film }),
+              h("span", null, a.name), on ? h("i", { class: "v6-pick-ck", html: I.check }) : null);
+            tile.addEventListener("dragstart", (e) => { e.dataTransfer.setData("application/x-h3s-asset", a.id); if (kind === "aud") e.dataTransfer.setData("application/x-h3s-audio", a.id); if (kind === "vid") e.dataTransfer.setData("application/x-h3s-video", a.id); e.dataTransfer.effectAllowed = "copy"; });
+            tile.onclick = () => { this.toggleRef(i, a.id); fill(); };
+            tile.oncontextmenu = (e) => { e.preventDefault(); this.assetMenu(e, a); };
+            list.append(tile);
+          }
+        } else {
+          const lib = this._chars; const cards = (lib?.cards || []).filter((c) => !q || String(c.name || "").toLowerCase().includes(q));
+          if (!lib?.cards) { list.append(h("p", { class: "v6-muted v6-pad" }, T("Загрузка…"))); setTimeout(() => openPop?.isConnected && fill(), 600); return; }
+          if (!cards.length) { list.append(empty(I.person, lib.cards.length ? T("Ничего не найдено") : T("Карточек персонажей пока нет"), btn({ label: T("Открыть «Персонажи»"), size: "sm", kind: "tinted", onclick: () => { closePopover(); this.setPage("library", "chars"); } }))); return; }
+          const used = new Set((s.cards || []).map((e) => e.id));
+          for (const c of cards) {
+            const th = this.charThumb?.(c);
+            const tile = h("button", { type: "button", class: "v6-pick-it" + (used.has(c.id) ? " on" : ""), draggable: "true" },
+              th ? h("img", { src: th, alt: "", loading: "lazy", draggable: "false" }) : h("i", { class: "v6-ic", html: I.person }), h("span", null, c.name), used.has(c.id) ? h("i", { class: "v6-pick-ck", html: I.check }) : null);
+            tile.addEventListener("dragstart", (e) => { e.dataTransfer.setData("application/x-h3s-card", c.id); e.dataTransfer.effectAllowed = "copy"; });
+            tile.onclick = () => { used.has(c.id) ? this.charRemove({ seg: i }, c.id) : this.charAdd({ seg: i }, c.id); fill(); };
+            list.append(tile);
+          }
+        }
+      };
+      const search = h("input", { class: "v6-in v6-search", type: "search", placeholder: T("Поиск"), spellcheck: "false" });
+      search.addEventListener("keydown", (e) => e.stopPropagation());
+      search.oninput = () => { q = search.value.trim().toLowerCase(); fill(); };
+      const tabs = seg([{ value: "media", label: T("Медиа") }, { value: "chars", label: T("Персонажи") }], tab, (v) => { tab = this._pickTab = v; fill(); }, { size: "sm", full: true });
+      const openPop = popover(this.root, anchor, h("div", { class: "v6-pick" }, h("div", { class: "v6-pick-h" }, tabs, search), list,
+        h("div", { class: "v6-pick-f" }, btn({ icon: I.upload, label: T("С компьютера…"), size: "sm", onclick: () => fileIn.click() }), h("i", { class: "v6-grow" }),
+          btn({ label: T("Медиатека"), size: "sm", onclick: () => { closePopover(); this.setPage("library", "assets"); } })), fileIn), { width: 360, align: "end" });
+      this._onAssetMeta = () => { if (openPop?.isConnected) fill(); else this._onAssetMeta = null; };
+      fill();
+      requestAnimationFrame(() => search.focus());
+    },
+
+    /** v6m: the picture «Как у изображения» reads — the selected clip's FLF first frame, else its last, else the first frame clip's. */
+    kfAspectSource() {
+      const pick = (sg) => { const [f, l] = sg ? C.kfAssets(this.p, sg) : [null, null]; return f || l || null; };
+      return pick(this.sel >= 0 ? this.seg(this.sel) : null) || this.p.segments.map(pick).find(Boolean) || null;
+    },
+    /** W/H of a picture asset (null until loaded; loading re-renders the inspector). */
+    imgRatio(a) {
+      const m = (this._imgDims ||= {}), k = a.id + "|" + a.file;
+      if (m[k] !== undefined) return m[k];
+      m[k] = null;
+      const im = new Image();
+      im.onload = () => { m[k] = im.naturalWidth && im.naturalHeight ? im.naturalWidth / im.naturalHeight : null; if (this.root) this.renderInspector(); };
+      im.src = this.assetUrl(a);
+      return null;
+    },
+    async setAspectFromImage() {
+      const a = this.kfAspectSource(); if (!a) return;
+      let r = this.imgRatio(a);
+      if (!r) r = await new Promise((res) => { const im = new Image(); im.onload = () => res(im.naturalWidth / im.naturalHeight); im.onerror = () => res(null); im.src = this.assetUrl(a); });
+      if (!r) return this.toast(T("Не удалось прочитать размер картинки"), true);
+      const cr = Math.max(C.RATIO_RANGE[0], Math.min(C.RATIO_RANGE[1], r));
+      this.mutate((p) => { p.settings.aspect = "image"; p.settings.image_ratio = Math.round(cr * 1e5) / 1e5; if (p.settings.res_mode !== "mp") p.settings.res_mode = "mp"; });
+      if (cr !== r) this.toast(T("Пропорции картинки вне 1:4…4:1 — взято ближайшее допустимое"));
+    },
+    /** «Модель»: the project's model preset as one menu, the node's wires as one quiet line. */
+    inspModel() {
+      this.mpStyle?.();
+      if (!this._mp) this.mpLoad?.().then(() => this.root && this.renderInspector());
+      const id = this.p.settings.model_preset || "", pr = this.mpGet?.(id), w = this.mpWired?.() || {}, miss = this.mpMissing?.(pr) || [];
+      const raw = this.mpSelect(id, () => {});
+      const opts = [...raw.options].map((o) => ({ value: o.value, label: o.value ? o.textContent : T("Провода ноды") }));
+      const sel = this.themedSelect({ value: id, options: opts, onChange: (v) => this.setProjPreset(v) });
+      const wired = ["model", "clip", "vae", "audio_vae"].filter((k) => w[k]);
+      // v6m: two clear rows — the preset of reference clips (REF) and of frame clips (FLF), each with the model it resolves to
+      const nm = (f) => String(f || "").split(/[\\/]/).pop();
+      const loraN = (p) => (p?.loras || []).filter((l) => l.on && (l.sm || l.sc)).length;
+      const line = (p, model, cls) => h("p", { class: "v6-note v6-mdl-line " + cls },
+        p ? (model ? nm(model) : T("модель с провода")) + " · " + T("LoRA: {0}", loraN(p)) : w.model ? T("Провода ноды") : T("Модель не выбрана"));
+      const refF = h("div", { class: "v6-fld v6-ref-model" }, h("span", { class: "v6-lbl" }, T("Пресет для референсов (REF)")), sel);
+      setTip(refF.firstChild, T("REF: генерация по референсам — персонажи, места, видео и звук в промпте (<Picture N>). Этим пресетом делаются все клипы без кадров."));
+      const kids = [refF, line(pr, pr?.model, "is-ref")];
+      { // v6h: «Кадры» clips (i2v / FLF) — the fl2va model
+        const kid = this.p.settings.kf_preset || "", kopts = opts.map((o) => (o.value ? o : { value: "", label: T("Как у REF") }));
+        const ksel = this.themedSelect({ value: kid, options: kopts, onChange: (v) => this.setKfPreset(v) });
+        const kf = h("div", { class: "v6-fld v6-kf-model" }, h("span", { class: "v6-lbl" }, T("Пресет для кадров (FLF)")), ksel);
+        setTip(kf.firstChild, T("FLF: генерация по кадрам — первый + последний кадр (fl2va), только первый (i2v) или только последний (l2v). Берётся «Модель для FLF» этого пресета; пусто — пресет REF. Энкодер, VAE и LoRA — из пресета."));
+        kids.push(kf);
+        const kp = (kid && this.mpGet?.(kid)) || pr || null, fl2 = (this._mp?.files?.unet || []).filter((x) => C.isFl2va(x));
+        const fm = kp ? (kp.flf_model || (C.isFl2va(kp.model) ? kp.model : fl2[0] || "")) : "";
+        kids.push(kp && !fm ? h("p", { class: "v6-note is-warn v6-mdl-line is-flf" }, T("Нет модели fl2va — выберите «Модель для FLF» в пресете"))
+          : line(kp, fm, "is-flf"));
+      }
+      if (wired.length) kids.push(h("p", { class: "v6-note" }, T("Подключено к ноде: {0}", wired.join(", "))));
+      if (miss.length) kids.push(h("p", { class: "v6-note is-warn" }, T("Нет файлов: ") + miss.map((m) => String(m[1]).split(/[\\/]/).pop()).join(", ")));
+      else if (!pr && w.model === false) kids.push(h("p", { class: "v6-note is-warn" }, T("Вход model не подключён: выберите пресет моделей или подключите модель к ноде.")));
+      kids.push(btn({ label: T("Пресеты и модели…"), size: "sm", kind: "ghost", cls: "v6-start", onclick: () => this.openPrefs("models") }));
+      return section(T("Модель"), null, ...kids);
+    },
+
+    // ---------------------------------------------------------------- «Ролик»
+    inspProject(body) {
+      const g = this.p.settings, set = (k, v, opt) => this.mutate((p) => { p.settings[k] = v; }, opt);
+      const [w, hh] = C.resolution(g), custom = g.res_mode === "custom", ratioM = g.res_mode === "ratio";
+      // v6m «Как у изображения»: the FLF first frame (else the last) of the selected clip, else of the first frame clip
+      const src = this.kfAspectSource(), srcR = src ? this.imgRatio(src) : null;
+      const imgOpt = { value: "image", label: T("Как у изображения"), disabled: custom || ratioM || !src,
+        tip: src ? T("Пропорции кадра FLF «{0}»{1}", src.name, srcR ? ` (${srcR.toFixed(3)}:1)` : "") : T("Нет кадров FLF: добавьте первый или последний кадр клипу в режиме FLF") };
+      const asp = seg(Object.keys(C.ASPECTS).map((a) => ({ value: a, label: a, disabled: custom || ratioM })), custom || ratioM ? "" : g.aspect === "image" ? "" : g.aspect, (v) => set("aspect", v), { size: "sm", full: true, label: T("Соотношение сторон") });
+      const imgB = seg([imgOpt], !custom && !ratioM && g.aspect === "image" ? "image" : "", () => this.setAspectFromImage(), { size: "sm", full: true, cls: "v6-asp-img" });
+      const mode = seg([{ value: "mp", label: T("По площади") }, { value: "custom", label: T("Свой размер") }, { value: "ratio", label: T("Своё W:H"), tip: T("Своё соотношение") + ": " + T("Любые пропорции W:H — 2.39:1, 5:4, 1.85 (от 1:4 до 4:1); размер — по площади") }],
+        g.res_mode || "mp", (k) => this.mutate((p) => { if (k === "custom") { const r = C.resolution(p.settings); p.settings.width = r[0]; p.settings.height = r[1]; } p.settings.res_mode = k; }), { size: "sm", full: true, cls: "v6-res-mode" });
+      const kids = [asp, imgB, mode];
+      if (g.aspect === "image" && !custom && !ratioM && src && srcR && Math.abs(srcR - Number(g.image_ratio || 0)) > 0.002)
+        kids.push(h("p", { class: "v6-note is-warn" }, T("Кадр изменился — "), h("a", { href: "#", onclick: (e) => { e.preventDefault(); this.setAspectFromImage(); } }, T("обновить пропорции"))));
+      const dim = h("span", { class: "v6-val" }, `${w}×${hh}`);
+      if (custom) {
+        const wi = field({ type: "number", value: g.width, step: 32, min: 32, suffix: "W", onChange: (v) => set("width", C.snap32(v)) });
+        const hi = field({ type: "number", value: g.height, step: 32, min: 32, suffix: "H", onChange: (v) => set("height", C.snap32(v)) });
+        for (const x of [wi, hi]) x.input.addEventListener("keydown", (e) => e.stopPropagation());
+        kids.push(h("div", { class: "v6-pair" }, wi, hi), h("p", { class: "v6-note" }, T("Кратно 32 пикселям")));
+      } else {
+        if (ratioM) {   // v6m «Своё соотношение»
+          const ok = C.parseRatio(g.ratio);
+          const ri = field({ type: "text", value: g.ratio || "", placeholder: "2.39:1", suffix: "W:H", onChange: (v) => set("ratio", String(v).trim().slice(0, 20)) });
+          ri.input.classList.add("v6-ratio-in"); ri.input.addEventListener("keydown", (e) => e.stopPropagation());
+          ri.input.addEventListener("input", () => { const r = C.parseRatio(ri.input.value); ri.classList.toggle("is-bad", !r);
+            const res = C.resolution({ ...g, ratio: ri.input.value }); dim.textContent = r ? `${res[0]}×${res[1]}` : "—"; });
+          if (!ok) ri.classList.add("is-bad");
+          const quick = seg(["2.39:1", "1.85:1", "5:4", "2:1", "4:5"].map((r) => ({ value: r, label: r })), ok ? String(g.ratio).trim() : "", (v) => set("ratio", v), { size: "sm", full: true, cls: "v6-ratio-q" });
+          kids.push(ri, quick, h("p", { class: "v6-note" + (ok ? "" : " is-warn") }, ok ? T("{0}:1 → {1}×{2} (кратно 32)", ok.toFixed(3).replace(/\.?0+$/, ""), w, hh) : T("Введите W:H от 1:4 до 4:1 — например 2.39:1, 5:4 или 1.85 (сейчас 16:9)")));
+        }
+        const mp = h("span", { class: "v6-cap" }, T("{0} Мп", Number(g.megapixels).toFixed(2)));
+        const r = slider({ min: 0.15, max: 1.2, step: 0.01, value: g.megapixels, onInput: (v) => { const res = C.resolution({ ...g, megapixels: v }); dim.textContent = `${res[0]}×${res[1]}`; mp.textContent = T("{0} Мп", v.toFixed(2)); this.mutate((p) => { p.settings.megapixels = v; }, { coalesce: "mp", render: "light" }); }, onChange: () => this.renderAll() });
+        const pre = [[0.3, "416p"], [0.5, "544p"], [0.7, "640p"], [0.98, "768p"]];
+        const cur = pre.find(([m]) => Math.abs(g.megapixels - m) < 0.005);
+        kids.push(h("div", { class: "v6-sl" }, r, mp), seg(pre.map(([m, l]) => ({ value: String(m), label: l, tip: m === 0.98 ? T("Официальное разрешение H3") : "" })), cur ? String(cur[0]) : "", (v) => set("megapixels", Number(v)), { size: "sm", full: true }));
+      }
+      body.append(section(T("Кадр"), dim, ...kids));
+      // seed
+      const seedIn = field({ type: "number", value: g.seed, step: 1, min: 0, onChange: (v) => set("seed", Math.max(0, Math.trunc(Number(v) || 0))) });
+      seedIn.addEventListener("keydown", (e) => e.stopPropagation());
+      body.append(section(T("Сид"), null, h("div", { class: "v6-pair" }, seedIn, btn({ icon: I.dice, label: T("Случайный"), size: "sm", onclick: () => set("seed", Math.floor(Math.random() * 2 ** 40)) })),
+        h("p", { class: "v6-note" }, T("Отрезок N получает сид + N − 1"))));
+      // negative (only read when cfg > 1)
+      const cfgEff = this.sel >= 0 && this.seg() ? C.passParams(this.p, this.sel, C.runKind(g)).cfg : g.cfg;
+      if (Number(cfgEff) > 1) {
+        const neg = h("textarea", { class: "v6-ta sm", placeholder: T("Чего не должно быть в кадре"), spellcheck: "false" }); neg.value = g.negative || "";
+        neg.oninput = () => this.mutate((p) => { p.settings.negative = neg.value; }, { coalesce: "gneg", render: "light" });
+        neg.addEventListener("keydown", (e) => e.stopPropagation());
+        body.append(section(T("Негативный промпт"), h("span", { class: "v6-cap" }, "cfg " + cfgEff), neg));
+      }
+      // model preset
+      if (this.mpSelect) body.append(this.inspModel());
+      // generation summary → settings
+      const kind = C.runKind(g), [dw, dh] = C.workResolution(g, "draft");
+      const sum = g.final_mode === "refine" ? T("2 этапа · {0}×{1} → {2}×{3}", dw, dh, w, hh) : T("1 этап · {0}×{1}", w, hh);
+      const link = h("button", { type: "button", class: "v6-linkrow" }, h("i", { class: "v6-ic", html: I.sliders }),
+        h("span", { class: "v6-linkrow-t" }, h("b", null, T("Генерация")), h("small", null, `${sum} · ${g.steps} ${plural(g.steps, T("шаг"), T("шага"), T("шагов"))} · cfg ${g.cfg} · ${g.sampler}`)), h("i", { class: "v6-ic", html: I.chevR }));
+      link.onclick = () => this.openPrefs("generation");
+      body.append(section(T("Параметры"), null, link, h("p", { class: "v6-note" }, kind === "draft" ? T("Сейчас: только черновик") : kind === "refine" ? T("Сейчас: черновик, затем финал") : T("Сейчас: сразу финал"))));
+    },
+  });
+}

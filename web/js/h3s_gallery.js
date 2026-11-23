@@ -1,0 +1,482 @@
+import { T } from "./h3s_i18n.js";
+
+/** Playback-only source/result pair, aligned at the source's 24 fps in-point.
+ *  The original clip may be longer than the generated segment; limit both to
+ *  the generated segment and never include the padded tail of the final chunk.
+ */
+export function swapCompareEntries(project, index, fps = 24) {
+  const seg = project?.segments?.[index];
+  if (!seg?.source?.swap || !seg?.result?.video) return null;
+  const asset = project.assets?.find((a) => a.id === seg.source.asset && a.category === "video");
+  if (!asset?.file || !fps || fps <= 0) return null;
+  const offset = Math.max(0, Math.trunc(Number(seg.source.in) || 0));
+  const count = Math.max(0, Math.trunc(Number(seg.result.frames || seg.frames) || 0));
+  const sourceLeft = Number(asset.frames) > 0 ? Math.max(0, Math.trunc(Number(asset.frames)) - offset) : count;
+  const frames = Math.min(count, sourceLeft);
+  if (!frames) return null;
+  const common = { pid: project.id, seg_index: index, frames,
+    clipDurationSec: frames / fps };
+  return [
+    { ...common, id: "swap-source:" + seg.id, kind: "source", label: T("Исходник"),
+      video: { filename: asset.file, subfolder: asset.subfolder || "", type: asset.type || "input" },
+      wh: [asset.width, asset.height], clipStartSec: offset / fps },
+    { ...common, id: "swap-result:" + seg.id, kind: "take", label: T("После замены"),
+      video: seg.result.video, clipStartSec: 0 },
+  ];
+}
+// «Галерея»: everything generated in the project (or in all projects) — takes, drafts, finals from drafts,
+// segment upscales, frozen segments and stitched videos. Search by prompt, filters, favourites, viewer,
+// side-by-side comparison; to the timeline / refs, upscale, final from draft, save to a folder, delete.
+// Variants of one video (draft → final → upscales, re-takes, region regenerations of a segment; the stitched
+// videos of a project) are stacked into one card by lineage (seg_id / base_key / draft_key; older entries:
+// the project's takes, the segment index, then the file key) — click opens the stack like a folder.
+// A/B compare: ×1/×2/×4 zoom inside a fixed viewport, A and B zoom and pan together (drag / wheel).
+// Backend: /h3lab/gallery (h3s_library.py), entries are recorded when each result is produced.
+export function installGallery(Editor, { C, h, ICON }) {
+  const KIND = { take: T("Дубль"), draft: T("Черновик"), refine: T("Финал ↑"), upscale: T("Апскейл"), region: T("Участок"), final: T("Ролик") };
+  const CHIP = { take: T("Дубль"), draft: T("Черн."), refine: T("Финал"), upscale: T("Апск."), region: "✂", final: T("Ролик") };
+  const FILTERS = [["all", T("Все")], ["take", T("Дубли")], ["draft", T("Черновики")], ["refine", T("Финал ↑")], ["upscale", T("Апскейл")], ["region", T("Участки")], ["frozen", T("⊠ Зафикс.")], ["final", T("Ролики")], ["fav", "★"]];
+  const RANK = { upscale: 5, refine: 4, take: 3, region: 2, draft: 1 };   // stack cover: the most finished stage, then the newest
+  const ZOOMS = [1, 2, 4];
+  const ago = (t) => {
+    if (!t) return "";
+    const d = new Date(t * 1000), now = new Date();
+    const hm = d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+    return d.toDateString() === now.toDateString() ? hm : d.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" }) + " " + hm;
+  };
+  Object.assign(Editor.prototype, {
+    /** Gallery entries (cached for a few seconds), merged with what the current project knows about them. */
+    async galLoad(force = false) {
+      const scope = this.galScope || "project", key = scope + ":" + this.p.id;
+      if (!force && this._gal && this._gal.key === key && Date.now() - this._gal.t < 4000) return this._gal;
+      let items = [], err = "";
+      try { items = await this.host.get("/h3lab/gallery", scope === "all" ? { all: "1" } : { id: this.p.id }); }
+      catch (e) { err = e.message || String(e); }
+      this._gal = { key, t: Date.now(), items: this.galEnrich(items || []), err };
+      return this._gal;
+    },
+    galEnrich(items) {
+      const byKey = {};
+      this.p.segments.forEach((s, i) => (s.takes || []).forEach((t) => { byKey[t.key] = { i, s, t }; }));
+      return items.map((e) => {
+        const r = e.pid === this.p.id ? byKey[e.key] : null;
+        const x = { ...e };
+        if (r) {
+          x.seg_index = r.i; x.seg_id = r.s.id; x.take_id = r.t.id;
+          if (!x.prompt) x.prompt = r.t.snap?.prompt || r.s.prompt || "";
+          if (!x.seed && r.t.seed != null) x.seed = r.t.seed;
+          if (x.scanned && r.t.result?.kind) x.kind = r.t.result.kind === "full" ? (r.t.result.upscale ? "upscale" : "take") : r.t.result.kind;
+          x.active = r.s.active_take === r.t.id;
+        }
+        if (e.kind === "region" && e.pid === this.p.id) {
+          const rg = (this.p.regions || []).find((g) => (g.takes || []).some((t) => t.key === e.key) || g.id === e.region_id);
+          const t = rg && (rg.takes || []).find((k) => k.key === e.key);
+          if (rg) { x.region_no = this.regionNo?.(rg.id) || 0; x.active = !!t && rg.active_take === t.id; }
+        }
+        // older entries without a segment id but with an index: the segment of this project at that index
+        if (!x.seg_id && x.seg_index != null && e.pid === this.p.id && this.p.segments[x.seg_index]) x.seg_id = this.p.segments[x.seg_index].id;
+        if (e.kind === "final" && e.pid === this.p.id && this.p.result?.full?.key === e.key) x.current = this.fullCurrent();
+        return x;
+      });
+    },
+    galRef(e) {
+      if (e.pid !== this.p.id) return null;
+      for (let i = 0; i < this.p.segments.length; i++) { const t = (this.p.segments[i].takes || []).find((x) => x.key === e.key); if (t) return { i, take: t }; }
+      return null;
+    },
+    galMatches(e) {
+      const f = this.galFilter || "all", q = (this.galQ || "").trim().toLowerCase();
+      if (f === "fav" && !e.fav) return false;
+      if (f === "frozen" && !e.frozen) return false;
+      if (!["all", "fav", "frozen"].includes(f) && e.kind !== f) return false;
+      if (q && !`${e.prompt || ""} ${e.seg_name || ""} ${e.project || ""} ${e.seed ?? ""}`.toLowerCase().includes(q)) return false;
+      return true;
+    },
+    /** Stacks of variants: [{key, items (newest first), cover, label}] in the order of their newest item.
+     *  Lineage: stitched videos → one stack per project; segment results → by segment id; an entry without one
+     *  follows base_key / draft_key to its source (or is found as the source of a derived entry); the rest stay alone. */
+    galGroups(list) {
+      const all = this._gal?.items || list, byKey = new Map(), kids = new Map(), memo = new Map();
+      const id = (e) => e.pid + ":" + e.key;
+      for (const e of all) if (e.key) byKey.set(id(e), e);
+      for (const e of all) for (const pk of [e.base_key, e.draft_key]) if (pk && !kids.has(e.pid + ":" + pk)) kids.set(e.pid + ":" + pk, e);
+      const gk = (e, depth = 0) => {
+        const me = id(e);
+        if (memo.has(me)) return memo.get(me);
+        let k = null;
+        if (e.kind === "final") k = "F:" + e.pid;
+        else if (e.seg_id) k = "S:" + e.pid + ":" + e.seg_id;
+        else if (depth < 8) {
+          memo.set(me, "K:" + me);   // cycle guard
+          const par = [e.base_key, e.draft_key].map((x) => x && byKey.get(e.pid + ":" + x)).find(Boolean);
+          const kid = kids.get(me);
+          if (par) k = gk(par, depth + 1);
+          if ((!k || k.startsWith("K:")) && kid) { const kk = gk(kid, depth + 1); if (!kk.startsWith("K:")) k = kk; }
+        }
+        k = k || "K:" + me;
+        memo.set(me, k); return k;
+      };
+      const groups = new Map();
+      for (const e of list) {
+        const k = gk(e);
+        if (!groups.has(k)) groups.set(k, { key: k, items: [] });
+        groups.get(k).items.push(e);
+      }
+      for (const g of groups.values()) {
+        g.items.sort((a, b) => (b.created || 0) - (a.created || 0));
+        const fin = g.key.startsWith("F:");
+        g.cover = g.items.reduce((best, e) => {
+          const sc = (x) => fin ? (x.current ? 1 : 0) : (RANK[x.kind] || 0);
+          return sc(e) > sc(best) || (sc(e) === sc(best) && (e.created || 0) > (best.created || 0)) ? e : best;
+        }, g.items[0]);
+        const e = g.items.find((x) => x.seg_index != null) || g.cover, nm = g.items.find((x) => x.seg_name)?.seg_name;
+        g.label = fin ? T("Ролики") + (g.cover.project && this.galScope === "all" ? ` · ${g.cover.project}` : "") :
+          e.seg_index != null ? T("Отрезок {0}", e.seg_index + 1) + (nm ? ` «${nm}»` : "") + (this.galScope === "all" && e.project ? ` · ${e.project}` : "") : (KIND[g.cover.kind] || T("Видео"));
+      }
+      return [...groups.values()];
+    },
+    /** One line about a variant: stage, method, resolution / Мп, seed, date. */
+    galLine(e) {
+      const wh = e.wh && e.wh[0] ? T("{0}×{1} ({2} Мп)", e.wh[0], e.wh[1], (e.wh[0] * e.wh[1] / 1e6).toFixed(1)) : "";
+      const meth = e.kind === "upscale" && e.upscale ? (C.UPSCALE_LABELS?.[e.upscale.method] || e.upscale.method) : "";
+      const st = e.kind === "region" ? `${e.region_name || (e.region_no ? T("Участок ") + e.region_no : T("Участок"))}` + (e.region_kind === "draft" ? T(" · черн.") : "") :
+        e.kind === "refine" ? T("Финал ↑ из черновика") : (KIND[e.kind] || e.kind);
+      return [st, meth, wh, e.kind === "final" && e.count ? T("{0} отр.", e.count) : "", e.seed != null ? T("сид {0}", e.seed) : "", e.seam && e.seam.verdict !== "ok" ? (e.seam.verdict === "hard" ? T("⚠ резкий шов") : T("◐ лёгкий скачок на шве")) : "", this.mpLabel?.(e.models) || "", ago(e.created)].filter(Boolean).join(" · ");
+    },
+    galOpenGroup(k) { this.galGroup = k; this.galFill(); },
+
+    /** Why a gallery item cannot be deleted ("" = it can). */
+    galInUse(e) {
+      if (e.pid !== this.p.id) return "";
+      if (e.active && e.kind === "region") return T("Это активный вариант участка — сначала выберите другой вариант или удалите участок");
+      if (e.active) return T("Это активный дубль на таймлайне — сначала выберите другой дубль");
+      if (e.kind === "final" && e.current) return T("Это текущий итоговый ролик");
+      const fn = e.video?.filename;
+      if (this.p.assets.some((a) => a.file === fn && a.subfolder === e.video?.subfolder)) return T("Видео используется как ассет проекта");
+      return "";
+    },
+
+    renderGallery(L) {
+      const view = h("div", { class: "h3l-pills gmode" }, [[false, T("▤ Папками"), T("Варианты одного видео (черновик, финал, апскейлы, участки, дубли) — одной карточкой")], [true, T("☰ Списком"), T("Каждый вариант отдельной карточкой")]].map(([k, l, t]) =>
+        h("div", { class: "h3l-pill" + (!!this.galFlat === k ? " on" : ""), title: t, onclick: () => { this.galFlat = k; this.renderLeft(); } }, l)));
+      const head = h("div", { class: "h3l-ghead" }, h("b", null, T("Галерея")), h("span", { class: "h3l-note gcount" }, ""), h("i", { class: "grow" }), view,
+        h("button", { class: "h3l-btn sm icon", title: T("Обновить"), html: "↻", onclick: () => { this.galLoad(true).then(() => this.galFill()); } }));
+      const scope = h("div", { class: "h3l-pills" }, [["project", T("Этот проект")], ["all", T("Все проекты")]].map(([k, l]) =>
+        h("div", { class: "h3l-pill" + ((this.galScope || "project") === k ? " on" : ""), onclick: () => { this.galScope = k; this.galSel = []; this.renderLeft(); } }, l)));
+      const q = h("input", { class: "h3l-in", placeholder: T("Поиск по промпту, имени, сиду…"), value: this.galQ || "" });
+      q.addEventListener("input", () => { this.galQ = q.value; clearTimeout(this._galQT); this._galQT = setTimeout(() => this.galFill(), 120); });
+      q.addEventListener("keydown", (e) => e.stopPropagation());
+      const filters = h("div", { class: "h3l-pills wrap" }, FILTERS.map(([k, l]) =>
+        h("div", { class: "h3l-pill" + ((this.galFilter || "all") === k ? " on" : ""), title: k === "fav" ? T("Избранное") : "", onclick: () => { this.galFilter = k; this.renderLeft(); } }, l)));
+      this.$.galBar = h("div", { class: "h3l-gbar" });
+      this.$.galCrumb = h("div", { class: "h3l-gcrumbs" });
+      this.$.galGrid = h("div", { class: "h3l-ggrid" }, h("div", { class: "h3l-note" }, T("Загрузка…")));
+      const grid = this.$.galGrid;   // the grid is the scroller; its scroll is kept per view (top level / each stack)
+      grid.addEventListener("scroll", () => { if (grid._view != null && grid._filled) (this._galScroll ||= {})[grid._view] = grid.scrollTop; });
+      L.append(h("div", { class: "h3l-gal" }, head, scope, q, filters, this.$.galBar, this.$.galCrumb, this.$.galGrid));
+      this.galLoad().then(() => this.galFill());
+    },
+
+    galFill() {
+      const grid = this.$.galGrid; if (!grid || !grid.isConnected) return;
+      const snap = this.uiSnap(this.$.left);   // refills (★, delete, search) keep the list scroll
+      const g = this._gal || { items: [] };
+      const list = g.items.filter((e) => this.galMatches(e));
+      this.galSel = (this.galSel || []).filter((id) => g.items.some((e) => e.id + e.pid === id));
+      const groups = this.galFlat ? null : this.galGroups(list);
+      let open = groups && this.galGroup ? groups.find((x) => x.key === this.galGroup) : null;
+      if (!open) this.galGroup = null;
+      const view = this.galFlat ? "flat" : open ? open.key : "top";
+      if (grid._view === view && grid._filled) (this._galScroll ||= {})[view] = grid.scrollTop;
+      const cnt = grid.parentElement.querySelector(".gcount");
+      if (cnt) cnt.textContent = open ? T("{0} вар.", open.items.length) : `${groups ? groups.length + " · " : ""}${list.length}${list.length !== g.items.length ? T(" из ") + g.items.length : ""}`;
+      if (cnt) cnt.title = groups && !open ? T("{0} карточек (стопок), {1} видео", groups.length, list.length) : "";
+      // breadcrumb of an open stack
+      const cr = this.$.galCrumb; cr.innerHTML = "";
+      if (open) {
+        cr.append(h("div", { class: "h3l-gcrumb" }, h("button", { class: "h3l-btn sm back", title: T("Назад ко всей галерее"), onclick: () => this.galOpenGroup(null) }, T("← Галерея")),
+          h("span", { class: "sep" }, "›"), h("b", null, open.label), h("span", { class: "h3l-note" }, T("{0} вариант{1}", open.items.length, open.items.length % 10 === 1 && open.items.length % 100 !== 11 ? "" : open.items.length % 10 >= 2 && open.items.length % 10 <= 4 && (open.items.length % 100 < 12 || open.items.length % 100 > 14) ? T("а") : T("ов")))));
+      }
+      // selection bar (compare)
+      const bar = this.$.galBar; bar.innerHTML = "";
+      const sel = this.galSel.map((id) => g.items.find((e) => e.id + e.pid === id)).filter(Boolean);
+      if (sel.length === 2) bar.append(h("button", { class: "h3l-btn sm primary", onclick: () => this.galView(sel) }, T("⇄ Сравнить выбранные")), h("button", { class: "h3l-btn sm", onclick: () => { this.galSel = []; this.galFill(); } }, T("Снять выбор")));
+      else if (sel.length === 1) bar.append(h("span", { class: "h3l-note" }, open || this.galFlat ? T("Ctrl+клик по второму — сравнить") : T("Ctrl+клик по второму — сравнить (варианты — внутри папки)")), h("button", { class: "h3l-btn sm", onclick: () => { this.galSel = []; this.galFill(); } }, "✕"));
+      grid.innerHTML = ""; grid._filled = false; grid._view = view;
+      if (g.err) grid.append(h("div", { class: "h3l-note err" }, T("Не удалось загрузить галерею: ") + g.err));
+      if (!list.length) {
+        grid.append(h("div", { class: "h3l-gempty" }, g.items.length ? T("Ничего не найдено — измените фильтр или поиск") : T("Здесь появится всё сгенерированное: дубли, черновики, финалы, апскейлы, участки, зафиксированные отрезки и готовые ролики.")));
+        this.uiRestore(this.$.left, snap, true); grid._filled = true; return;
+      }
+      if (open) for (const e of open.items) grid.append(this.galCard(e, { variant: true }));
+      else if (groups) for (const x of groups.slice(0, 400)) grid.append(x.items.length > 1 ? this.galCard(x.cover, { group: x }) : this.galCard(x.items[0]));
+      else for (const e of list.slice(0, 400)) grid.append(this.galCard(e));
+      this.uiRestore(this.$.left, snap, true); this.leftRestore?.();   // the list arrives after the re-render: put the scroll back
+      grid.scrollTop = this._galScroll?.[view] || 0; grid._filled = true;
+    },
+
+    galCard(e, o = {}) {
+      const grp = o.group || null;
+      const sid = e.id + e.pid, on = (this.galSel || []).includes(sid) || (grp && grp.items.some((x) => (this.galSel || []).includes(x.id + x.pid)));
+      const img = e.poster ? h("img", { src: this.host.url(e.poster), loading: "lazy", draggable: "false" })
+        : e.video ? h("video", { src: this.host.url(e.video) + "#t=0.1", muted: true, preload: "metadata", playsinline: true, draggable: "false" }) : h("div", { class: "noimg" }, "◫");
+      const star = h("div", { class: "star" + (e.fav ? " on" : ""), title: e.fav ? T("Убрать из избранного") : T("В избранное") }, e.fav ? "★" : "☆");
+      star.addEventListener("click", (ev) => { ev.stopPropagation(); this.galFav(e); });
+      const tags = h("div", { class: "tags" }, h("span", { class: "k " + e.kind }, KIND[e.kind] || e.kind),
+        e.frozen ? h("span", { class: "k fz" }, "⊠") : null, e.active ? h("span", { class: "k on", title: T("Активный дубль на таймлайне") }, "✓") : null,
+        e.kind === "final" && e.current ? h("span", { class: "k on" }, T("итог")) : null);
+      const kinds = grp ? Object.entries(grp.items.reduce((m, x) => ((m[x.kind] = (m[x.kind] || 0) + 1), m), {})).sort((a, b) => (RANK[b[0]] || 0) - (RANK[a[0]] || 0)) : [];
+      const chips = grp ? h("div", { class: "chips" }, kinds.map(([k, n]) => h("span", { class: "k " + k }, CHIP[k] + (n > 1 ? "×" + n : "")))) : null;
+      const badge = grp ? h("div", { class: "cnt", title: T("{0} вариантов — клик открывает папку", grp.items.length) }, `▤ ${grp.items.length}`) : null;
+      const line1 = o.variant ? this.galLine(e) : grp ? [grp.label, e.frames ? T("{0} с", (e.frames / C.FPS).toFixed(1)) : "", ago(grp.items[0].created)].filter(Boolean).join(" · ") : [e.seg_index != null ? T("Отр. {0}", e.seg_index + 1) : e.kind === "final" ? T("{0} отр.", e.count || "") : "", e.frames ? T("{0} с", (e.frames / C.FPS).toFixed(1)) : "", e.seed != null ? T("сид {0}", e.seed) : "", ago(e.created)].filter(Boolean).join(" · ");
+      const tip = grp ? T("{0}: {1} вариантов ({2})\nОбложка: {3}\n\nКлик — открыть папку · двойной клик — смотреть обложку · Ctrl+клик — выбрать обложку для сравнения", grp.label, grp.items.length, kinds.map(([k, n]) => (KIND[k] || k) + (n > 1 ? " ×" + n : "")).join(", "), this.galLine(e))
+        : (e.prompt || "").slice(0, 400) + (e.models ? "\n\n" + this.mpTip(e.models) : "") + T("\n\nДвойной клик — смотреть · Ctrl+клик — выбрать для сравнения · правый клик — действия");
+      const typeLine = grp ? T("Папка · {0} видео", grp.items.length) : T("Видео · {0}", KIND[e.kind] || T("Ролик"));
+      const card = h("div", { class: "h3l-gcard" + (on ? " sel" : "") + (grp ? " stack" : ""), title: tip },
+        grp ? h("div", { class: "ftab" }, "▤ " + T("Папка")) : null,
+        h("div", { class: "pv" }, img, tags, star, chips, badge),
+        h("div", { class: "cap" }, h("div", { class: "gtype" }, grp ? typeLine : "▶ " + typeLine), h("div", { class: "l1" }, line1), h("div", { class: "l2" }, (e.prompt || "").replace(/\s+/g, " ").slice(0, 90) || (e.project && (this.galScope === "all") ? e.project : "")),
+          this.galScope === "all" && e.project ? h("div", { class: "l3" }, e.project) : null));
+      const pv = card.querySelector(".pv");
+      card.addEventListener("pointerenter", () => {   // muted hover preview (not playback of the project)
+        if (!e.video || pv.querySelector("video")) return;
+        const v = h("video", { src: this.host.url(e.video), muted: true, loop: true, playsinline: true, preload: "auto" });
+        v.muted = true; pv.append(v); v.play().catch(() => {});
+      });
+      card.addEventListener("pointerleave", () => { const v = pv.querySelector("video"); if (v) { v.pause(); v.remove(); } });
+      card.addEventListener("click", (ev) => {
+        const cur = this.galSel || [];
+        if (ev.ctrlKey || ev.metaKey || ev.shiftKey) this.galSel = cur.includes(sid) ? cur.filter((x) => x !== sid) : [...cur, sid].slice(-2);
+        else if (grp) { this.galOpenGroup(grp.key); return; }
+        else this.galSel = cur.length === 1 && cur[0] === sid ? [] : [sid];
+        this.galFill();
+      });
+      card.addEventListener("dblclick", (ev) => { ev.stopPropagation(); this.galView([e]); });
+      card.addEventListener("contextmenu", (ev) => this.galMenu(ev, e, grp));
+      return card;
+    },
+
+    galMenu(ev, e, grp = null) {
+      const ref = this.galRef(e), g = this._gal || { items: [] }, busy = this.run.active;
+      const other = (this.galSel || []).map((id) => g.items.find((x) => x.id + x.pid === id)).find((x) => x && x.id + x.pid !== e.id + e.pid);
+      const seg = this.seg(), why = this.galInUse(e);
+      const isSeg = e.kind !== "final";
+      this.openMenu(ev, (KIND[e.kind] || T("Видео")) + (e.seg_index != null ? T(" · отрезок {0}", e.seg_index + 1) : ""), [
+        grp ? { label: T("▤ Открыть папку ({0} вар.)", grp.items.length), hint: T("клик"), fn: () => this.galOpenGroup(grp.key) } : null,
+        grp && grp.items.length >= 2 ? { label: T("⇄ Сравнить два последних варианта"), fn: () => this.galView([grp.cover, grp.items.find((x) => x !== grp.cover)]) } : null,
+        { label: grp ? T("▶ Смотреть обложку") : T("▶ Смотреть"), hint: T("2×клик"), fn: () => this.galView([e]) },
+        { icon: this.constructor.VIEWER_ICONS?.view || "", label: T("Удобный просмотр"), title: T("Во весь экран: масштаб до ×4, покадрово, скорость, петля"), fn: () => this.galViewer(e), dis: !e.video },
+        other ? { label: T("⇄ Сравнить с выбранным"), fn: () => this.galView([other, e]) } : null,
+        "sep",
+        ref ? { label: e.active ? T("✓ Активный дубль на таймлайне") : T("✓ Выбрать этот дубль (отрезок {0})", ref.i + 1), fn: () => this.selectTake(ref.i, ref.take.id), dis: e.active || busy || !!this.seg(ref.i)?.freeze } : null,
+        { icon: ICON.film || "", label: T("На таймлайн (футаж)"), title: T("Добавить видео в конец таймлайна как футаж (как есть)"), fn: () => { const id = this.galAsset(e); if (id) this.addFootage(id); }, dis: !e.video },
+        seg ? { icon: ICON.link || "", label: T("В референсы отрезка {0} (<Video>)", this.sel + 1), fn: () => { const id = this.galAsset(e); if (id && !this.seg().refs.includes(id)) this.toggleRef(this.sel, id); }, dis: !e.video } : null,
+        ref && isSeg && e.kind !== "upscale" ? { label: T("↑ Апскейл отрезка"), title: T("Выбрать этот дубль и увеличить отрезок (метод по умолчанию)"), fn: () => { if (!e.active) this.selectTake(ref.i, ref.take.id, true); this.upscaleSeg(ref.i, this.upDefault()); }, dis: busy } : null,
+        ref && e.kind === "draft" ? { label: T("↑ Финал из черновика"), fn: () => { if (!e.active) this.selectTake(ref.i, ref.take.id, true); this.finalFromDraft([ref.i]); }, dis: busy } : null,
+        "sep",
+        { label: T("ℹ Параметры генерации"), title: T("Окно с промптом, моделью, LoRA, сидом, шагами, разрешением и апскейлом этого результата; можно скопировать промпт"), fn: () => {
+          const ref = this.galRef(e);
+          this.openGenMeta({ segIndex: ref?.i, take: ref?.take, gallery: e });
+        } },
+        { label: T("↺ Повторить"), title: this.galRef(e)?.i >= 0 ? T("Восстановить промпт и настройки этого результата в отрезок") : T("Недоступно: итоговый ролик собран из всех отрезков и не привязан к одному отрезку. «Повторить» работает для дублей отрезков"), fn: () => {
+          const ref = this.galRef(e);
+          if (!(ref?.i >= 0)) return this.toast(T("Нет отрезка для «Повторить»"), true);
+          this.repeatFromMeta({ segIndex: ref.i, prompt: e.prompt || ref.take?.snap?.prompt || "",
+            refs: ref.take?.snap?.refs || this.seg(ref.i)?.refs || [], cards: ref.take?.snap?.cards || [],
+            up: ref.take?.snap?.upscale || e.upscale, ov: ref.take?.snap?.overrides || {},
+            mp: ref.take?.psnap?.mp || null, st: ref.take?.psnap?.settings || null,
+            models: e.models, seed: e.seed, kind: e.kind });
+        }, dis: !(this.galRef(e)?.i >= 0) },
+        { label: T("⤓ Сохранить в папку…"), fn: () => this.galSave(e), dis: !e.video },
+        { label: e.fav ? T("☆ Убрать из избранного") : T("★ В избранное"), fn: () => this.galFav(e) },
+        "sep",
+        why ? { why } : null,
+        { icon: ICON.trash, label: T("Удалить…"), danger: true, dis: !!why || busy, fn: () => this.galDelete(e) },
+      ]);
+    },
+
+    /** A gallery video as a project video asset (reused if it is already one). Returns the asset id. */
+    galAsset(e) {
+      const v = e.video; if (!v) return null;
+      const have = this.p.assets.find((a) => a.category === "video" && a.file === v.filename && a.subfolder === v.subfolder);
+      if (have) return have.id;
+      const id = "gl_" + (e.key || C.newId("g")).slice(0, 16);
+      const name = (KIND[e.kind] || T("Видео")) + (e.seg_index != null ? T(" отр. {0}", e.seg_index + 1) : "") + (e.seed != null ? ` · ${e.seed}` : "");
+      this.mutate((p) => { if (!p.assets.some((a) => a.id === id)) p.assets.push({ id, name, file: v.filename, subfolder: v.subfolder, type: v.type || "output", category: "video",
+        duration: (e.frames || 0) / C.FPS, frames: e.frames || 0, width: (e.wh || [])[0] || 0, height: (e.wh || [])[1] || 0, has_audio: true, poster: e.poster || null, strip: e.strip || null, strip_n: e.strip ? 10 : 0, frozen: "" }); }, { render: "none" });
+      this.renderAll();
+      this.toast(T("«{0}» добавлено в ассеты (видео)", name));
+      return id;
+    },
+
+    async galFav(e) {
+      try {
+        await this.host.call("/h3lab/gallery/update", { pid: e.pid, id: e.id, fields: { fav: !e.fav } });
+        for (const x of this._gal?.items || []) if (x.id === e.id && x.pid === e.pid) x.fav = !e.fav;
+        this.galFill();
+      } catch (err) { this.toast(T("Не удалось: ") + (err.message || err), true); }
+    },
+
+    async galDelete(e) {
+      const why = this.galInUse(e); if (why) { this.toast(why, true); return; }
+      const other = e.pid !== this.p.id ? T("\nЭто элемент другого проекта («{0}»): его дубль там пропадёт.", e.project || e.pid) : "";
+      if (!confirm(T("Удалить «{0}{1}» из галереи?\nФайлы видео и кэш латента будут удалены с диска.{2}{3}", KIND[e.kind] || T("видео"), e.seg_index != null ? T(" · отрезок ") + (e.seg_index + 1) : "", e.frozen ? T("\nЗафиксированная копия останется.") : "", other))) return;
+      try {
+        await this.host.call("/h3lab/gallery/delete", { pid: e.pid, id: e.id });
+        const ref = this.galRef(e);
+        if (ref && !e.frozen) this.mutate((p) => { const s = p.segments[ref.i]; s.takes = (s.takes || []).filter((t) => t.id !== ref.take.id); }, { render: "none" });
+        await this.galLoad(true);
+        this.renderAll();
+        this.toast(T("Удалено из галереи"));
+      } catch (err) { this.toast(T("Не удалось удалить: ") + (err.message || err), true); }
+    },
+
+    /** «Сохранить в папку»: a copy of the item's mp4 (as is) in a folder on the ComfyUI computer. */
+    galSave(e) {
+      this.closeSaveDialog?.();
+      const ld = (k, d) => { try { return localStorage.getItem(k) ?? d; } catch (x) { return d; } };
+      const folder = h("input", { class: "h3l-in", value: ld("h3ls.exportDir", ""), placeholder: T("по умолчанию: ComfyUI/output/h3labstudio/export") });
+      const name = h("input", { class: "h3l-in", value: `${(e.project || this.p.name || "h3").replace(/[\\/:*?"<>|]/g, "_")}_${(KIND[e.kind] || "video").replace(/\W+/g, "")}${e.seg_index != null ? "_otr" + (e.seg_index + 1) : ""}${e.seed != null ? "_" + e.seed : ""}` });
+      const info = h("div", { class: "h3l-note" }, T("mp4 сохраняется как есть · файл не перезаписывается (добавится _2, _3…)"));
+      const go = h("button", { class: "h3l-btn primary" }, T("Сохранить"));
+      const close = () => this.closeSaveDialog();
+      go.onclick = async () => {
+        go.disabled = true;
+        try { localStorage.setItem("h3ls.exportDir", folder.value.trim()); } catch (x) {}
+        try { const r = await this.host.exportVideo({ project: e.pid || this.p.id, source: e.video, folder: folder.value.trim(), name: name.value.trim() }); info.textContent = "✓ " + r.path; this.toast(T("Сохранено: ") + r.path); }
+        catch (err) { info.textContent = T("Ошибка: ") + (err.message || err); info.classList.add("err"); }
+        finally { go.disabled = false; }
+      };
+      const box = h("div", { class: "h3l-save h3l-glass" }, h("div", { class: "hd" }, h("b", null, T("⤓ Сохранить из галереи")), h("i", { class: "grow" }), h("button", { class: "h3l-btn sm icon", onclick: close }, "✕")),
+        this.field(T("Папка"), this.folderPicker(folder)), this.field(T("Имя файла (.mp4)"), name), info, h("div", { class: "h3l-row" }, h("i", { class: "grow" }), h("button", { class: "h3l-btn", onclick: close }, T("Закрыть")), go));
+      const modal = this.$.saveModal = h("div", { class: "h3l-modal" }, box);
+      modal.addEventListener("pointerdown", (x) => { if (x.target === modal) close(); });
+      box.addEventListener("keydown", (x) => { x.stopPropagation(); if (x.key === "Escape") close(); if (x.key === "Enter") go.click(); });
+      this.root.append(modal); name.focus(); name.select();
+    },
+
+    /** Source / replacement comparison for the selected finished Swap segment. */
+    galCompareSwap(i = this.sel) {
+      if (i < 0 || this.isStale(i)) return this.toast(T("Сначала создайте актуальный Swap-отрезок"), true);
+      const entries = swapCompareEntries(this.p, i, C.FPS);
+      if (!entries) return this.toast(T("Для сравнения нужны исходное видео и готовый результат замены"), true);
+      this.galView(entries);
+    },
+
+    /** Viewer: one video, or two side by side with shared controls (synchronised play / pause / seek). No autoplay. */
+    galView(list) {
+      this.galClose(true);   // switching a variant keeps the zoom / pan
+      this.stopPlayback?.();
+      const two = list.length === 2;
+      const vids = list.map((e) => h("video", { src: this.host.url(e.video), preload: "auto", playsinline: true, controls: !two }));
+      // A/B: each side may switch to another variant of its stack
+      const pick = (k) => {
+        if (!two || list.some((e) => e.clipDurationSec)) return null; // aligned Swap source/result is a fixed pair
+        const g = this.galGroups(this._gal?.items || list).find((x) => x.items.some((y) => y.id + y.pid === list[k].id + list[k].pid));
+        if (!g || g.items.length < 2) return null;
+        const s = h("select", { class: "h3l-in sm", title: T("Другой вариант этой папки") }, g.items.map((x, j) => h("option", { value: j, selected: x.id + x.pid === list[k].id + list[k].pid }, this.galLine(x))));
+        s.addEventListener("change", () => { const nl = [...list]; nl[k] = g.items[+s.value]; this.galView(nl); });
+        s.addEventListener("keydown", (x) => x.stopPropagation());
+        return s;
+      };
+      const cols = list.map((e, k) => h("div", { class: "col" }, two ? h("div", { class: "vp" }, vids[k]) : vids[k], h("div", { class: "lbl" }, h("b", null, (two ? "AB"[k] + " · " : "") + (e.label || KIND[e.kind] || "") + (e.seg_index != null ? T(" · отрезок {0}", e.seg_index + 1) : "")), pick(k),
+        h("span", null, [e.wh ? e.wh.join("×") : "", e.frames ? (e.frames / C.FPS).toFixed(2) + T(" с") : "", e.seed != null ? T("сид ") + e.seed : "", ago(e.created)].filter(Boolean).join(" · ")),
+        e.prompt ? h("small", null, e.prompt.replace(/\s+/g, " ").slice(0, 220)) : null)));
+      let ctr = null;
+      if (list.length === 2) {
+        const [a, b] = vids;
+        b.muted = true;
+        const play = h("button", { class: "h3l-btn sm", html: ICON.play }), seek = h("input", { type: "range", min: 0, max: 1000, value: 0, class: "h3l-range" }), t = h("span", { class: "h3l-note" }, T("0.00 с"));
+        const snd = h("button", { class: "h3l-btn sm", title: T("Чей звук слышно") }, T("Звук: A"));
+        snd.onclick = () => { const toB = !a.muted; a.muted = toB; b.muted = !toB; snd.textContent = T("Звук: ") + (toB ? "B" : "A"); };
+        // Swap compares a source interval (which may start halfway through a long
+        // clip) with a fresh result starting at zero. Ordinary gallery A/B keeps
+        // its original full-video timing when no interval metadata is supplied.
+        const starts = list.map((e) => Math.max(0, Number(e.clipStartSec) || 0));
+        const limit = list.every((e) => Number(e.clipDurationSec) > 0)
+          ? Math.min(...list.map((e) => Number(e.clipDurationSec))) : null;
+        const dur = () => {
+          if (limit === null) return Math.max(a.duration || 0, b.duration || 0) || 1;
+          const available = [a, b].map((v, k) => Number.isFinite(v.duration) && v.duration > starts[k]
+            ? v.duration - starts[k] : Infinity);
+          return Math.max(0.01, Math.min(limit, ...available));
+        };
+        const relative = (v, k) => Math.max(0, v.currentTime - starts[k]);
+        const absolute = (v, k, sec) => Math.max(starts[k],
+          Math.min(starts[k] + Math.max(0, sec), Number.isFinite(v.duration) ? Math.max(starts[k], v.duration - .01) : Infinity));
+        const pause = () => { a.pause(); b.pause(); play.innerHTML = ICON.play; };
+        play.onclick = () => {
+          if (!a.paused) { pause(); return; }
+          const sec = relative(a, 0) >= dur() - .03 ? 0 : relative(a, 0);
+          a.currentTime = absolute(a, 0, sec); b.currentTime = absolute(b, 1, sec);
+          a.play().catch(() => {}); b.play().catch(() => {}); play.innerHTML = ICON.pause;
+        };
+        seek.oninput = () => {
+          const sec = seek.value / 1000 * dur();
+          a.currentTime = absolute(a, 0, sec); b.currentTime = absolute(b, 1, sec);
+        };
+        a.ontimeupdate = () => {
+          const sec = relative(a, 0);
+          seek.value = Math.round(Math.min(1, sec / dur()) * 1000);
+          t.textContent = Math.min(sec, dur()).toFixed(2) + T(" с");
+          if (limit !== null && sec >= dur() - .02) { pause(); return; }
+          if (!b.paused && Math.abs(relative(b, 1) - sec) > .08) b.currentTime = absolute(b, 1, sec);
+        };
+        a.onended = pause;
+        if (limit !== null) [a, b].forEach((v, k) => v.addEventListener("loadedmetadata", () => {
+          v.currentTime = absolute(v, k, 0);
+        }));
+        // zoom ×1/×2/×4 inside fixed viewports, A and B share zoom and pan (fractions of the viewport size)
+        const zs = this._galZoom ||= { z: 1, fx: 0, fy: 0, px: false };
+        const vps = cols.map((c) => c.querySelector(".vp"));
+        const clamp = () => { const m = (zs.z - 1) / 2; zs.fx = Math.max(-m, Math.min(m, zs.fx)); zs.fy = Math.max(-m, Math.min(m, zs.fy)); };
+        const apply = () => {
+          clamp();
+          vps.forEach((vp, k) => { const r = vp.getBoundingClientRect(); vids[k].style.transform = `translate(${(zs.fx * (r.width || 1)).toFixed(1)}px, ${(zs.fy * (r.height || 1)).toFixed(1)}px) scale(${zs.z})`;
+            vp.classList.toggle("zoomed", zs.z > 1); vids[k].classList.toggle("px", zs.px); });
+          zb.forEach((b) => b.classList.toggle("on", +b.dataset.z === zs.z));
+        };
+        const setZ = (z, cx = 0.5, cy = 0.5) => {   // keep the point under the cursor (cx, cy: fractions of the viewport) in place
+          const ux = (cx - 0.5 - zs.fx) / zs.z, uy = (cy - 0.5 - zs.fy) / zs.z;
+          zs.z = z; zs.fx = cx - 0.5 - ux * z; zs.fy = cy - 0.5 - uy * z; if (z === 1) zs.fx = zs.fy = 0; apply();
+        };
+        const zb = ZOOMS.map((z) => h("button", { class: "h3l-btn sm", "data-z": z, title: z === 1 ? T("Весь кадр") : T("Увеличить в {0} раза — тяните мышью, чтобы двигать (A и B вместе)", z), onclick: () => setZ(z) }, "×" + z));
+        const pxb = h("button", { class: "h3l-btn sm", title: T("Пиксели без сглаживания (видно каждый пиксель)"), onclick: () => { zs.px = !zs.px; pxb.classList.toggle("on", zs.px); apply(); } }, "▦");
+        pxb.classList.toggle("on", zs.px);
+        vps.forEach((vp) => {
+          vp.addEventListener("pointerdown", (ev) => {
+            if (ev.button !== 0 || zs.z <= 1) return;
+            ev.preventDefault(); const r = vp.getBoundingClientRect(), x0 = ev.clientX, y0 = ev.clientY, f0 = [zs.fx, zs.fy];
+            vp.setPointerCapture?.(ev.pointerId); vp.classList.add("drag");
+            const mv = (m) => { zs.fx = f0[0] + (m.clientX - x0) / (r.width || 1); zs.fy = f0[1] + (m.clientY - y0) / (r.height || 1); apply(); };
+            const up = () => { vp.classList.remove("drag"); vp.removeEventListener("pointermove", mv); vp.removeEventListener("pointerup", up); vp.removeEventListener("pointercancel", up); };
+            vp.addEventListener("pointermove", mv); vp.addEventListener("pointerup", up); vp.addEventListener("pointercancel", up);
+          });
+          vp.addEventListener("wheel", (ev) => {   // wheel: next / previous zoom step around the cursor
+            ev.preventDefault(); const r = vp.getBoundingClientRect(), i = ZOOMS.indexOf(zs.z), j = Math.max(0, Math.min(ZOOMS.length - 1, (i < 0 ? 0 : i) + (ev.deltaY < 0 ? 1 : -1)));
+            if (ZOOMS[j] !== zs.z) setZ(ZOOMS[j], (ev.clientX - r.left) / (r.width || 1), (ev.clientY - r.top) / (r.height || 1));
+          }, { passive: false });
+          vp.addEventListener("dblclick", () => setZ(zs.z === 1 ? 2 : 1));
+        });
+        a.addEventListener("loadedmetadata", apply); b.addEventListener("loadedmetadata", apply);
+        this._galZoomApply = apply;
+        ctr = h("div", { class: "h3l-row ctr" }, play, seek, t, snd, h("div", { class: "zoom", title: T("Увеличение (колесо мыши / двойной клик тоже) — A и B вместе") }, zb), pxb);
+        requestAnimationFrame(apply);
+      }
+      const box = h("div", { class: "h3l-gview h3l-glass" + (list.length === 2 ? " two" : "") },
+        h("div", { class: "hd" }, h("b", null, list.length === 2 ? T("⇄ Сравнение") : T("▶ Просмотр")), h("i", { class: "grow" }),
+          list.length === 1 ? h("button", { class: "h3l-btn sm", html: (this.constructor.VIEWER_ICONS?.view || "") + T("<span>Удобный просмотр</span>"), title: T("Во весь экран: масштаб до ×4, покадрово, скорость, петля"), onclick: () => this.galViewer(list[0], vids[0].currentTime) }) : null, h("button", { class: "h3l-btn sm icon", onclick: () => this.galClose() }, "✕")),
+        h("div", { class: "vids" }, cols), ctr);
+      const modal = this.$.galModal = h("div", { class: "h3l-modal" }, box);
+      modal.addEventListener("pointerdown", (x) => { if (x.target === modal) this.galClose(); });
+      modal.addEventListener("keydown", (x) => { x.stopPropagation(); if (x.key === "Escape") this.galClose(); });
+      modal.tabIndex = -1;
+      this.root.append(modal); modal.focus();
+    },
+    galViewer(e, t = 0) {
+      if (!e?.video) return;
+      this.openViewer({ ref: e.video, t, title: (KIND[e.kind] || T("Видео")) + (e.seg_index != null ? T(" · отрезок {0}", e.seg_index + 1) : "") + (e.kind === "upscale" || e.kind === "region" ? " · " + this.galLine(e).split(" · ").slice(0, 2).join(" · ") : "") + (e.seed != null ? T(" · сид {0}", e.seed) : "") });
+    },
+    galClose(keepZoom = false) { if (!keepZoom) this._galZoom = null; if (this.$?.galModal) { this.$.galModal.querySelectorAll("video").forEach((v) => v.pause()); this.$.galModal.remove(); this.$.galModal = null; this.focusSink?.(); } },
+  });
+}

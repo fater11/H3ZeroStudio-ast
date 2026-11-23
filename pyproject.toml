@@ -1,0 +1,8 @@
+# H3ZeroStudio Lab — LOCAL EXPERIMENT ONLY (UI/FX skin of H3ZeroStudio 1.0.6). Never publish to the Comfy Registry.
+[project]
+name = "h3zerostudio-lab-local"
+description = "LOCAL EXPERIMENT: animated UI skin of H3ZeroStudio. Not for publishing."
+version = "1.0.6-lab"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = []

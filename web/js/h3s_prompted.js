@@ -1,0 +1,820 @@
+import { T } from "./h3s_i18n.js";
+import { astPromptOf, astImproveSystem } from "./h3s_assist.js";
+
+// H3ZeroStudio: «✎ Редактировать» — a comfortable full-window prompt editor for every prompt field.
+// CodeMirror 6 (MIT, vendored as one ES module in ./vendor, loaded on first use): undo/redo, find/replace,
+// line numbers, wrap, auto-indent, multi-cursor. Typing @ lists the references of this prompt (images
+// <Picture N>, video <Video N>, audio <Audio N>, the auto last-frame picture) with thumbnails; tokens are
+// highlighted, tokens that point to no reference are flagged. A side panel shows the recommended H3 prompt
+// structure (subject_definitions … non_diegetic_music) with Russian notes, live section status and the
+// detailed_description word count vs the 350–500 target; «Вставить шаблон» inserts the skeleton.
+const SECTIONS = [
+  ["subject_definitions", T("Кто есть кто"), "what each referenced item is and what it contributes",
+    T("Каждая метка с новой строки: <Picture N>, <Video N>, <Audio N> (или своя <Subject N>) — что это (персонаж, предмет, локация, стиль, движение, голос) и что именно берётся из референса: внешность, одежда, детали, роль в ролике.")],
+  ["summary", T("Кратко"), "[task type] one paragraph",
+    T("Один абзац. Начинается с типа задачи в квадратных скобках: [reference generation], [keyframe completion], [video editing], [video continuation], [audio reuse], [audio reference] (можно сочетать через +). Что за ролик, главные герои, как используются референсы.")],
+  ["retention_analysis", T("Что сохранить"), "per-label fidelity markers",
+    T("Для каждой метки — насколько точно её сохранить: fully_preserved (почти без изменений), partially_preserved (часть черт меняется), attribute_transfer (черты переносятся на другой объект), weak_reference (только стиль/атмосфера). Для аудио: fully_copy, partially_copy, reference, weak_reference.")],
+  ["detailed_description", T("Основное описание"), "shot-by-shot body, normally 350–500 words",
+    T("Главная часть промпта. 1–2 предложения про стиль, реализм, свет, палитру и атмосферу, затем кадры по порядку: [Shot 1], [Shot 2] At 00:03.500 … В каждом: композиция, персонаж (по референсам), действие, камера (ракурс, объектив, движение), свет, звук. Реплики: <Subject 1> (S1) says: <d>[Russian] текст</d>. Обычно 350–500 слов.")],
+  ["overall_soundscape", T("Звуковая среда"), "ambience and physical sound",
+    T("Фон и физические звуки сцены: эмбиент, шаги, ветер, ткань, предметы. Без диалогов.")],
+  ["non_diegetic_music", T("Закадровая музыка"), "audience-only score, or N/A",
+    T("Музыка, которую слышит только зритель: инструменты, темп, настроение, развитие. Если музыки нет — N/A.")],
+];
+const KEYS = SECTIONS.map((s) => s[0]);
+const TASKS = ["[reference generation]", "[keyframe completion]", "[video editing]", "[video continuation]", "[audio reuse]", "[audio reference]"];
+const RETAIN = ["fully_preserved", "partially_preserved", "attribute_transfer", "weak_reference", "fully_copy", "partially_copy", "reference"];
+const DESC_MIN = 350, DESC_MAX = 500;
+const LS = "h3ls.prompted.v1";
+const TOKEN_RE = /<(Picture|Video|Audio|Image)\s*(\d+)>/g;
+const words = (t) => (String(t).match(/[\p{L}\p{N}][\p{L}\p{N}'’_/-]*/gu) || []).length;
+/** Rough token estimate for an English-ish prompt (≈ 1.3 tokens per word, ≈ 4 chars per token; Cyrillic denser). */
+const approxTokens = (t) => { t = String(t); if (!t.trim()) return 0; const cyr = (t.match(/[\u0400-\u04FF]/g) || []).length; return Math.round(Math.max(words(t) * 1.3, (t.length - cyr) / 4 + cyr / 2.2)); };
+
+/** Sections of a prompt: [{key, line (1-based), from, to (doc offsets of the body), body}] in document order. */
+export function parseSections(text) {
+  const out = [], re = new RegExp(`^[ \\t]*(${KEYS.join("|")})[ \\t]*:`, "gm");
+  let m;
+  while ((m = re.exec(text))) out.push({ key: m[1], at: m.index, from: m.index + m[0].length });
+  out.forEach((s, i) => { s.to = i + 1 < out.length ? out[i + 1].at : text.length; s.body = text.slice(s.from, s.to); s.words = words(s.body); });
+  return out;
+}
+
+/** Skeleton of the recommended structure; refs = [{token, name, kind}] fill subject_definitions / retention_analysis. */
+export function promptTemplate(refs = [], { task = "[reference generation]" } = {}) {
+  const defs = refs.length ? refs.map((r) => `${r.token} — ${r.name ? r.name + ": " : ""}`).join("\n") : "<Picture 1> — ";
+  const ret = refs.length ? refs.map((r) => `${r.token}: ${r.kind === "audio" ? "reference" : "fully_preserved"}`).join("\n") : "<Picture 1>: fully_preserved";
+  return `subject_definitions:\n${defs}\n\nsummary:\n${task} \n\nretention_analysis:\n${ret}\n\ndetailed_description:\n\n[Shot 1] \n\noverall_soundscape:\n\n\nnon_diegetic_music:\nN/A\n`;
+}
+
+// v6h «Кадры» (fl2va): I2VA / FL2VA / L2VA prompt layout — an alignment line, then three fields (prompt library
+// «Output format — T2VA / I2VA / FL2VA / L2VA»). Picture numbers follow the frames given to the model: first, last.
+const KF_SECTIONS = [
+  ["integrated_multimodal_description", T("Описание"), "[Shot 1] style, first-frame state → development → result",
+    T("[Shot 1] без таймкода, начинается со стиля (Live-action, cinematic, …). i2v: исходный кадр → начало действия → развитие → результат. FLF: состояние первого кадра → промежуточные изменения → сближение → состояние последнего кадра (лучше один план).")],
+  ["overall_soundscape", T("Звуковая среда"), "ambience and physical sound", T("Фон и физические звуки сцены: эмбиент, шаги, ветер, ткань, предметы. Без диалогов.")],
+  ["non_diegetic_music", T("Закадровая музыка"), "audience-only score, or N/A", T("Музыка, которую слышит только зритель. Если музыки нет — N/A.")],
+];
+const KF_KEYS = KF_SECTIONS.map((x) => x[0]);
+/** kind: "i2v" (first only) | "flf" (first + last) | "l2v" (last only); sec = seconds of the last frame. */
+export function kfAlignLine(kind, sec) {
+  const s = Number(sec || 0).toFixed(2);
+  if (kind === "i2v") return "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.";
+  if (kind === "l2v") return `How the reference pictures align with the target video — <Picture 1> (from [Shot 1]) aligns with the ${s}-second mark of the target video.`;
+  return `How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot 1) aligns with the ${s}-second mark of the target video.`;
+}
+export function kfTemplate(kind, sec, body = "") {
+  return `${kfAlignLine(kind, sec)}\n\nintegrated_multimodal_description: [Shot 1] ${body}\n\noverall_soundscape: \n\nnon_diegetic_music: N/A\n`;
+}
+function parseKfSections(text) {
+  const out = [], re = new RegExp(`^[ \\t]*(${KF_KEYS.join("|")})[ \\t]*:`, "gm");
+  let m;
+  while ((m = re.exec(text))) out.push({ key: m[1], at: m.index, from: m.index + m[0].length });
+  out.forEach((x, i) => { x.to = i + 1 < out.length ? out[i + 1].at : text.length; x.body = text.slice(x.from, x.to); x.words = words(x.body); });
+  return out;
+}
+
+export function installPromptEditor(Editor, { C, h, ICON }) {
+  let CM = null;
+  const loadCM = async () => CM || (CM = await import("./vendor/codemirror.js"));
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const loadPrefs = () => { try { return { wrap: true, lines: true, mono: false, size: 15, side: true, ...JSON.parse(localStorage.getItem(LS) || "{}") }; } catch (e) { return { wrap: true, lines: true, mono: false, size: 15, side: true }; } };
+  const savePrefs = (p) => { try { localStorage.setItem(LS, JSON.stringify(p)); } catch (e) {} };
+  const KIND_RU = { picture: T("картинка"), video: T("видео"), audio: T("аудио"), auto: T("авто-кадр"), var: T("подстановка") };
+  const PHRASES = {
+    "Find": T("Найти"), "Replace": T("Заменить на"), "next": T("дальше"), "previous": T("назад"), "all": T("все"), "match case": T("регистр"),
+    "by word": T("слово целиком"), "regexp": T("рег. выражение"), "replace": T("заменить"), "replace all": T("заменить все"), "close": T("закрыть"),
+    "current match": T("текущее совпадение"), "replaced $ matches": T("заменено: $"), "replaced match on line $": T("заменено в строке $"), "on line": T("в строке"),
+    "Go to line": T("К строке"), "go": T("перейти"),
+  };
+
+  Object.assign(Editor.prototype, {
+    /** The references a prompt can point at. ctx: {kind: "seg"|"marker", seg} | {kind: "region", region} | {kind: "global"|"negative"} | {kind: "phrase"}.
+     *  → {items: [{token, kind, name, sub, thumb, icon, over}], valid: Map(token → note|null), note} */
+    promptRefs(ctx) {
+      const p = this.p;
+      const segList = (i) => {
+        const s = p.segments[i]; if (!s) return [];
+        const out = [];
+        if (C.kfMode?.(p, s) && C.kfMode(p, s) !== "t2v") {   // v6h «Кадры»: the frames are the only pictures
+          C.kfAssets(p, s).filter(Boolean).forEach((a, n, arr) => out.push({ token: `<Picture ${n + 1}>`, kind: "frame",
+            name: a === C.kfAssets(p, s)[0] ? T("первый кадр") : T("последний кадр"), sub: a.name, thumb: this.assetUrl(a) }));
+          return out;
+        }
+        C.orderedRefs(p, s).forEach((a, n) => out.push({ token: `<Picture ${n + 1}>`, kind: "picture", name: a.name, sub: { character: T("персонаж"), location: T("локация"), other: T("другое") }[a.category] || T("картинка"), thumb: this.assetUrl(a), over: n >= C.MAX_REF_IMAGES }));
+        const cp = C.continuityPicture(p, i);
+        if (cp) out.push({ token: `<Picture ${cp}>`, kind: "auto", name: T("последний кадр отрезка {0}", i), sub: T("добавляется автоматически"), icon: "⟶", over: cp > C.MAX_REF_IMAGES });
+        if (!C.isFootage(s)) C.videoRefs(p, s).forEach((a, k) => out.push({ token: `<Video ${k + 1}>`, kind: "video", name: a.name, sub: T("видео{0}", a.duration ? " · " + Number(a.duration).toFixed(1) + T(" с") : ""), thumb: a.poster ? this.posterUrl(a) : "", icon: "◫", over: k >= C.MAX_REF_VIDEOS }));
+        C.audioRefs(p, s).forEach((a, k) => out.push({ token: `<Audio ${k + 1}>`, kind: "audio", name: a.name, sub: T("аудио"), icon: "♪", over: k >= C.MAX_REF_AUDIOS }));
+        out.push(...(this.peCardItems?.(s, i, false) || []));   // «Персонажи»: after the plain refs
+        return out;
+      };
+      if (ctx.kind === "seg" || ctx.kind === "marker") {
+        const i = ctx.seg ?? -1, items = i >= 0 ? segList(i) : [];
+        return { items, valid: new Map(items.map((r) => [r.token, null])), note: i >= 0 ? T("Референсы отрезка {0}", i + 1) : T("Маркер за концом ролика — референсов нет"),
+          subjects: i >= 0 && ctx.kind === "seg" ? this.peSubjects?.(p.segments[i], i, false) || [] : [] };
+      }
+      if (ctx.kind === "region") {
+        const rg = ctx.region || {};
+        const items = C.orderedRefs(p, { refs: rg.refs || [] }).map((a, n) => ({ token: `<Picture ${n + 1}>`, kind: "picture", name: a.name, sub: T("картинка участка"), thumb: this.assetUrl(a), over: n >= C.MAX_REF_IMAGES }));
+        items.push(...(this.peCardItems?.(rg, null, true) || []));
+        return { items, valid: new Map(items.map((r) => [r.token, null])), note: T("Референсы участка (картинки)"), subjects: this.peSubjects?.(rg, null, true) || [] };
+      }
+      if (ctx.kind === "phrase") {
+        const items = [{ token: "{n}", kind: "var", name: T("номер последнего кадра"), sub: T("станет <Picture N>"), icon: "#" }, { token: "<Picture {n}>", kind: "var", name: T("последний кадр прошлого отрезка"), sub: T("как метка H3"), icon: "⟶" }];
+        return { items, valid: new Map(), note: T("Фраза продления: {n} заменяется номером картинки последнего кадра") };
+      }
+      // global prompt / negative: added to every clip, so a token means a different reference per clip
+      const by = new Map(), n = p.segments.length;
+      p.segments.forEach((s, i) => { if (C.isFootage(s)) return; for (const r of segList(i)) { if (!by.has(r.token)) by.set(r.token, { ...r, per: [] }); by.get(r.token).per.push(`${i + 1}: ${r.name}`); } });
+      const gen = p.segments.map((s, i) => i).filter((i) => !C.isFootage(p.segments[i]));
+      const items = [...by.values()].sort((a, b) => a.kind.localeCompare(b.kind) || a.token.localeCompare(b.token, "en", { numeric: true }))
+        .map((r) => ({ ...r, name: r.per.length === 1 ? T("отрезок {0}", r.per[0]) : T("в {0} отр.: ", r.per.length) + r.per.slice(0, 3).join(" · ") + (r.per.length > 3 ? " …" : ""), sub: KIND_RU[r.kind === "auto" ? "picture" : r.kind] }));
+      const valid = new Map(items.map((r) => { const miss = gen.length - r.per.length; return [r.token, miss > 0 ? T("есть только в {0} из {1} отрезков", r.per.length, gen.length) : null]; }));
+      return { items, valid, global: true, note: T("Общий промпт добавляется к каждому отрезку: номер метки у каждого отрезка свой ({0} отр.)", n) };
+    },
+
+    /** «✎ Редактировать» button for a prompt field. spec() → {title, ctx, value, apply(text)} (read at click time). */
+    peButton(spec, extra = "") {
+      peEnsureStyle();
+      return h("button", { class: "h3l-btn sm h3l-pe-btn " + extra, type: "button", title: T("Открыть удобный редактор промпта: поиск/замена, @ — ссылки на референсы, подсказка по структуре H3"), html: T("<span>✎ Редактировать</span>"),
+        onpointerdown: (e) => e.stopPropagation(), onclick: (e) => { e.preventDefault(); e.stopPropagation(); this.openPromptEditor(spec()); } });
+    },
+
+    async openPromptEditor(spec) {
+      if (this.pe) return;
+      peEnsureStyle();   // v6 opens the editor directly (no peButton), so the stylesheet must load here too
+      this.closeMenu?.();
+      const pe = this.pe = { spec, orig: String(spec.value ?? ""), prefs: loadPrefs(), loading: true };
+      let cm;
+      try { cm = await loadCM(); }
+      catch (e) { this.pe = null; return this.toast(T("Не удалось загрузить редактор: ") + (e.message || e), true); }
+      if (this.pe !== pe || !this.root) return;
+      this.peBuild(cm);
+    },
+
+    peBuild(cm) {
+      const pe = this.pe, spec = pe.spec, prefs = pe.prefs;
+      const { EditorState, EditorSelection, Compartment, Prec, RangeSetBuilder } = cm;
+      const { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, highlightSpecialChars, Decoration, ViewPlugin, placeholder, rectangularSelection, crosshairCursor, dropCursor } = cm;
+      const refs = () => (pe.refs = this.promptRefs(spec.ctx));
+      refs();
+      // ---- highlighting: ref tokens (ok / missing / over limit), section keys, [Shot N], <d>…</d>, retention markers
+      const deco = (cls) => Decoration.mark({ class: cls });
+      const D = { ok: deco("pe-tok"), vid: deco("pe-tok vid"), aud: deco("pe-tok aud"), warn: deco("pe-tok warn"), bad: deco("pe-tok bad"), subj: deco("pe-subj"), key: deco("pe-key"), shot: deco("pe-shot"), dlg: deco("pe-dlg"), ret: deco("pe-ret"), task: deco("pe-task"), var: deco("pe-tok") };
+      const HL = new RegExp([
+        "<(?:Picture|Video|Audio|Image)\\s*\\d+>", "<Subject\\s*\\d+>", `^[ \\t]*(?:${KEYS.join("|")})(?=[ \\t]*:)`, "\\[Shot\\s*\\d+\\]", "</?d>",
+        `\\b(?:${RETAIN.join("|")})\\b`, "\\[(?:reference generation|keyframe completion|video editing|video continuation|audio reuse|audio reference)\\]", "\\{n\\}",
+      ].join("|"), "gm");
+      const tokClass = (t) => {
+        const m = /^<(Picture|Video|Audio|Image)\s*(\d+)>$/.exec(t); if (!m) return null;
+        const norm = `<${m[1]} ${m[2]}>`;
+        if (m[1] === "Image" || !pe.refs.valid.has(norm)) return spec.ctx.kind === "phrase" ? D.ok : D.bad;
+        const it = pe.refs.items.find((r) => r.token === norm);
+        if (pe.refs.valid.get(norm) || it?.over) return D.warn;
+        return m[1] === "Video" ? D.vid : m[1] === "Audio" ? D.aud : D.ok;
+      };
+      const build = (view) => {
+        const b = new RangeSetBuilder();
+        for (const { from, to } of view.visibleRanges) {
+          let pos = from;
+          while (pos <= to) {
+            const line = view.state.doc.lineAt(pos);
+            HL.lastIndex = 0; let m;
+            while ((m = HL.exec(line.text))) {
+              if (!m[0].length) { HL.lastIndex++; continue; }
+              const t = m[0], s = line.from + m.index, e = s + t.length;
+              let d = tokClass(t);
+              if (!d) d = t.startsWith("<Subject") ? D.subj : t.startsWith("[Shot") ? D.shot : /^<\/?d>$/.test(t) ? D.dlg : t === "{n}" ? D.var : t.startsWith("[") ? D.task : RETAIN.includes(t) ? D.ret : D.key;
+              const lead = d === D.key ? t.length - t.trimStart().length : 0;
+              b.add(s + lead, e, d);
+            }
+            pos = line.to + 1;
+          }
+        }
+        return b.finish();
+      };
+      const hl = ViewPlugin.fromClass(class { constructor(v) { this.decorations = build(v); } update(u) { if (u.docChanged || u.viewportChanged || u.transactions.some((t) => t.reconfigured)) this.decorations = build(u.view); } }, { decorations: (v) => v.decorations });
+      // ---- @ autocomplete
+      const kindIcon = { picture: "▣", auto: "⟶", video: "◫", audio: "♪", var: "#", frame: "◧" };
+      const source = (cx) => {
+        const bang = pe.refs.subjects?.length ? cx.matchBefore(/(?:^|(?<=[\s(\[]))![\p{L}\p{N}_'-]*/u) : null;
+        if (bang) return this.peSubjectCompletion(bang, cx);
+        const m = cx.matchBefore(/@[^\s@<>]*/);
+        if (!m || (m.from === m.to && !cx.explicit)) return null;
+        const q = m.text.slice(1).toLowerCase();
+        const items = pe.refs.items.filter((r) => !q || [r.token, r.name, r.sub, KIND_RU[r.kind] || "", r.token.replace(/[<>]/g, "")].some((x) => String(x || "").toLowerCase().includes(q)));
+        const opts = items.map((r, k) => ({
+          label: r.token, detail: r.name, info: r.sub + (pe.refs.valid.get(r.token) ? " · ⚠ " + pe.refs.valid.get(r.token) : "") + (r.over ? T(" · ⚠ сверх лимита H3 — не попадёт в генерацию") : ""),
+          type: r.kind, boost: -k, _r: r,
+          apply: (view, c, from, to) => {
+            const before = view.state.sliceDoc(Math.max(0, from - 1), from), after = view.state.sliceDoc(to, to + 1);
+            const ins = (before && !/\s/.test(before) ? " " : "") + r.token + (after && /\s/.test(after) ? "" : " ");
+            view.dispatch({ changes: { from, to, insert: ins }, selection: { anchor: from + ins.length }, userEvent: "input.complete" });
+          },
+        }));
+        if (!opts.length) opts.push({ label: pe.refs.items.length ? T("Ничего не найдено") : T("Нет прикреплённых референсов"), detail: pe.refs.items.length ? "" : T("перетащите ассет в «Референсы»"), type: "none", apply: () => {} });
+        return { from: m.from, to: cx.pos, options: opts, filter: false };
+      };
+      const thumbRender = {
+        render: (c) => {
+          const r = c._r, el = document.createElement("span"); el.className = "pe-ac-th";
+          if (r?.thumb) { const im = document.createElement("img"); im.src = r.thumb; im.draggable = false; el.append(im); }
+          else el.textContent = r ? kindIcon[r.kind] || "•" : "–";
+          return el;
+        }, position: 20,
+      };
+      // ---- compartments for the toggles
+      const cWrap = new Compartment(), cLines = new Compartment(), cTheme = new Compartment();
+      const theme = () => EditorView.theme({ "&": { fontSize: prefs.size + "px" }, ".cm-content, .cm-gutters": { fontFamily: prefs.mono ? '"JetBrains Mono", "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace' : 'Inter, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif' } });
+      const apply = () => { this.closePromptEditor(true); return true; };
+      const view = pe.view = new EditorView({
+        state: EditorState.create({
+          doc: pe.orig,
+          extensions: [
+            EditorState.phrases.of(PHRASES), EditorState.allowMultipleSelections.of(true), EditorState.tabSize.of(2),
+            cm.history(), drawSelection(), dropCursor(), rectangularSelection(), crosshairCursor(), highlightSpecialChars(), highlightActiveLine(), highlightActiveLineGutter(),
+            cm.highlightSelectionMatches(), cm.search({ top: true }), cm.closeBrackets(), EditorState.languageData.of(() => [{ closeBrackets: { brackets: ["(", "[", "{"] } }]),
+            cm.autocompletion({ override: [source], activateOnTyping: false, icons: false, addToOptions: [thumbRender], closeOnBlur: false, maxRenderedOptions: 60 }),
+            Prec.highest(keymap.of([
+              { key: "Mod-Enter", run: apply }, { key: "Mod-s", run: apply },
+              { key: "Mod-h", run: (v) => { cm.openSearchPanel(v); setTimeout(() => pe.el?.querySelector(".cm-search input[name=replace]")?.focus(), 0); return true; } },
+              { key: "Tab", run: (v) => cm.acceptCompletion(v) },
+            ])),
+            keymap.of([...cm.closeBracketsKeymap, ...cm.completionKeymap, ...cm.searchKeymap, ...cm.historyKeymap, ...cm.defaultKeymap, cm.indentWithTab]),
+            placeholder(spec.placeholder || T("Пишите промпт… @ — ссылка на референс")),
+            cWrap.of(prefs.wrap ? EditorView.lineWrapping : []), cLines.of(prefs.lines ? [lineNumbers()] : []), cTheme.of(theme()),
+            hl,
+            EditorView.updateListener.of((u) => {
+              if (u.docChanged || u.selectionSet) this.peStatus();
+              // the list opens on «@» only (activate-on-typing would swallow a quick Esc after any keystroke)
+              if (u.docChanged && u.transactions.some((t) => t.isUserEvent("input.type"))) {
+                let at = false; u.changes.iterChanges((a, b, c, d, ins) => { const x = ins.toString(); if (x.endsWith("@") || (x.endsWith("!") && pe.refs.subjects?.length)) at = true; });
+                if (at) setTimeout(() => cm.startCompletion(u.view), 0);
+              }
+            }),
+            EditorView.contentAttributes.of({ spellcheck: "false", autocorrect: "off", autocapitalize: "off" }),
+          ],
+        }),
+      });
+      const recfg = (c, ext) => view.dispatch({ effects: c.reconfigure(ext) });
+      // ---- chrome
+      const B = (html, title, fn, cls = "") => h("button", { class: "h3l-btn sm " + cls, type: "button", html, title,
+        onmousedown: (e) => e.preventDefault(),   // keep the caret (and focus) in the editor
+        onclick: (e) => { e.preventDefault(); fn(e); if (!pe.confirm) view.focus(); } });
+      const tog = (key, label, title, fn) => { const b = B(label, title, () => { prefs[key] = !prefs[key]; savePrefs(prefs); b.classList.toggle("on", !!prefs[key]); fn(); }); b.classList.toggle("on", !!prefs[key]); return b; };
+      const sizeL = h("span", { class: "h3l-note pe-size" }, prefs.size + " px");
+      const fsz = (d) => { prefs.size = Math.max(11, Math.min(28, prefs.size + d)); savePrefs(prefs); sizeL.textContent = prefs.size + " px"; recfg(cTheme, theme()); };
+      const sel = () => view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to);
+      const tools = h("div", { class: "pe-tools" },
+        B("↶", T("Отменить (Ctrl+Z)"), () => cm.undo(view), "icon"), B("↷", T("Повторить (Ctrl+Y / Ctrl+Shift+Z)"), () => cm.redo(view), "icon"),
+        h("span", { class: "sep" }),
+        B(T("✨ Улучшить промпт"), T("Улучшить текущий текст через LLM из настроек Ассистента; проверить результат перед заменой"), () => this.peImprovePrompt(), "pri pe-improve-btn"),
+        h("span", { class: "sep" }),
+        B(T("⌕ Найти"), T("Найти (Ctrl+F)"), () => cm.openSearchPanel(view)),
+        B(T("⇄ Заменить"), T("Найти и заменить (Ctrl+H)"), () => { cm.openSearchPanel(view); setTimeout(() => pe.el?.querySelector(".cm-search input[name=replace]")?.focus(), 0); }),
+        h("span", { class: "sep" }),
+        tog("wrap", T("↩ Перенос"), T("Перенос длинных строк"), () => recfg(cWrap, prefs.wrap ? EditorView.lineWrapping : [])),
+        tog("lines", T("# Строки"), T("Номера строк"), () => recfg(cLines, prefs.lines ? [lineNumbers()] : [])),
+        tog("mono", T("Моно"), T("Моноширинный шрифт"), () => recfg(cTheme, theme())),
+        B("A−", T("Шрифт меньше (Ctrl+−)"), () => fsz(-1)), sizeL, B("A+", T("Шрифт больше (Ctrl+=)"), () => fsz(1)),
+        h("span", { class: "sep" }),
+        B(T("⧉ Копировать"), T("Скопировать выделение (или весь текст, если ничего не выделено)"), async () => {
+          const t = sel() || view.state.doc.toString();
+          try { await navigator.clipboard.writeText(t); this.toast(T("Скопировано: {0} симв.", t.length)); } catch (e) { this.toast(T("Буфер обмена недоступен: ") + (e.message || e), true); }
+        }),
+        B(T("⎘ Вставить"), T("Вставить из буфера обмена (Ctrl+V)"), async () => {
+          try { const t = await navigator.clipboard.readText(); view.dispatch(view.state.replaceSelection(t)); } catch (e) { this.toast(T("Браузер не дал прочитать буфер — нажмите Ctrl+V"), true); }
+          view.focus();
+        }),
+        B(T("⌫ Очистить"), T("Очистить весь текст (отменяется Ctrl+Z)"), () => view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "" } }), "danger"),
+        h("span", { class: "sep" }),
+        B(T("@ Референс"), T("Вставить ссылку на референс (или наберите @ в тексте)"), () => { const r = view.state.selection.main; view.dispatch({ changes: { from: r.from, to: r.to, insert: "@" }, selection: { anchor: r.from + 1 } }); view.focus(); cm.startCompletion(view); }),
+        ...(this.peCardTools?.(B) || []),
+        h("i", { class: "grow" }),
+        tog("side", T("☰ Структура H3"), T("Подсказка по структуре промпта H3"), () => pe.el.classList.toggle("noside", !prefs.side)));
+      // reference chips (click = insert at the caret)
+      const chips = h("div", { class: "pe-refs" }, h("span", { class: "h3l-note" }, pe.refs.note + (pe.refs.items.length ? T(" · клик — вставить") : "")),
+        pe.refs.items.map((r) => h("span", { class: "pe-chip " + r.kind + (pe.refs.valid.get(r.token) || r.over ? " warn" : ""), title: `${r.token} — ${r.name} (${r.sub})` + (pe.refs.valid.get(r.token) ? `\n⚠ ${pe.refs.valid.get(r.token)}` : "") + (r.over ? T("\n⚠ сверх лимита H3") : ""),
+          onmousedown: (e) => e.preventDefault(), onclick: () => this.peInsert(r.token) },
+          r.thumb ? h("img", { src: r.thumb, draggable: "false" }) : h("span", { class: "ic" }, kindIcon[r.kind] || "•"), h("b", null, r.token), h("span", { class: "nm" }, String(r.name || "").slice(0, 28)))),
+        !pe.refs.items.length && spec.ctx.kind !== "phrase" ? h("span", { class: "h3l-note" }, T("— пока нет: перетащите ассет в «Референсы»")) : null);
+      // side panel
+      const side = h("div", { class: "pe-side" });
+      pe.side = side;
+      const status = h("div", { class: "pe-status" });
+      pe.statusEl = status;
+      const el = pe.el = h("div", { class: "h3l-pe-modal" + (prefs.side ? "" : " noside") },
+        h("div", { class: "h3l-pe h3l-glass" },
+          h("div", { class: "pe-hd" }, h("span", { class: "vtag" }, T("Промпт")), h("b", { class: "pe-title" }, spec.title || T("Промпт")), h("i", { class: "grow" }),
+            h("span", { class: "h3l-note" }, T("Ctrl+Enter — применить · Esc — отмена")), B("✕", T("Закрыть (Esc)"), () => this.closePromptEditor(false), "icon")),
+          tools, chips,
+          h("div", { class: "pe-body" }, h("div", { class: "pe-ed" }, view.dom), side),
+          h("div", { class: "pe-ft" }, status, h("i", { class: "grow" }),
+            B(T("Отмена"), T("Закрыть без изменений (Esc)"), () => this.closePromptEditor(false)),
+            B(T("✓ Применить"), T("Сохранить текст в поле (Ctrl+Enter)"), () => this.closePromptEditor(true), "pri"))));
+      // the modal owns the keyboard: keys reach CodeMirror (the editor's window handler steps aside while this.pe
+      // is set) and stop here, so ComfyUI shortcuts never see them
+      el.addEventListener("keydown", (e) => {
+        const ctrl = e.ctrlKey || e.metaKey;
+        if (e.key === "Escape" && !e.defaultPrevented) { e.preventDefault(); if (pe.review) this.peCloseReview(); else if (pe.confirm) this.peConfirmClose(false); else this.closePromptEditor(false); }
+        else if (ctrl && (e.key === "=" || e.key === "+")) { e.preventDefault(); fsz(1); }
+        else if (ctrl && e.key === "-") { e.preventDefault(); fsz(-1); }
+        e.stopPropagation();
+      });
+      for (const ev of ["keyup", "keypress", "paste", "copy", "cut", "wheel", "contextmenu"]) el.addEventListener(ev, (e) => e.stopPropagation(), ev === "wheel" ? { passive: true } : undefined);
+      el.addEventListener("pointerdown", (e) => { e.stopPropagation(); if (e.target === el) e.preventDefault(); });
+      (this.root || document.body).append(el);
+      pe.loading = false;
+      this.peSide(); this.peStatus();
+      view.dispatch({ selection: EditorSelection.cursor(view.state.doc.length), scrollIntoView: true });
+      view.focus();
+    },
+
+    /** Abort LLM streaming without touching the original editor document. */
+    peCloseReview(focus = true) {
+      const pe = this.pe; if (!pe?.review) return;
+      pe.abort?.abort(); pe.abort = null; pe.llmBusy = false;
+      pe.review.remove(); pe.review = null;
+      if (focus) pe.view?.focus();
+    },
+
+    /** Context of an actual timeline continuation, including the exact automatic phrase when it has a Picture. */
+    peImproveContinuation(ctx) {
+      if (ctx?.kind !== "seg" || !Number.isInteger(ctx.seg) || !C.usesContinuity(this.p, ctx.seg)) return "";
+      const i = ctx.seg, n = C.continuityPicture(this.p, i), frames = this.items?.()[i]?.overlap || 0;
+      const lines = [
+        "This clip CONTINUES the previous video, not a newly cut scene. Keep the same identities, clothing, environment, lighting, soundscape and the motion direction at the seam.",
+        frames > 0 ? `The first ${frames} video frames overlap the previous completed clip; preserve motion and spatial continuity through that shared region.`
+          : "There are no fixed overlap frames; retain the intended narrative and visual continuity without inventing a frame reference.",
+      ];
+      if (n) {
+        const configured = (this.p.settings.continuity_phrase || "").trim() || C.DEFAULT_CONTINUITY;
+        const phrase = configured.split("{n}").join(String(n));
+        lines.push(`The engine supplies <Picture ${n}> as the previous clip's last frame and automatically appends this EXACT configured phrase at generation time: ${phrase}`);
+        lines.push("Honor the phrase and its reference numbering. Do not duplicate it in the saved editor text unless it was already present in the original prompt.");
+      } else {
+        lines.push("This continuation method does not supply a separate previous-frame <Picture N> reference; do not invent one.");
+      }
+      return lines.join("\n");
+    },
+
+    /** Build the same prompt-improvement request as the UI, so all inputs can be regression-tested. */
+    peImprovementRequest(source, ctx, refs = [], kf = null) {
+      const kind = ctx?.kind || "seg";
+      const isRef = /^(?:subject_definitions|retention_analysis)\s*:/m.test(source)
+        || refs.some((r) => ["picture", "video", "audio", "auto"].includes(r.kind));
+      const mode = kf ? ({ i2v: "i2va", flf: "fl2va", l2v: "l2va" }[kf])
+        : isRef ? "ref2va" : "t2va";
+      const refNotes = refs.filter((r) => r.kind !== "var")
+        .map((r) => `${r.token} — ${r.name || r.sub || r.kind}`).join("\n");
+      const sec = kind === "seg" && Number.isInteger(ctx?.seg) ? (this.items?.()[ctx.seg]?.frames - 1) / C.FPS : 0;
+      const styles = this.astActiveStyleRules?.() || "";
+      const continuation = this.peImproveContinuation(ctx);
+      const system = astImproveSystem(mode, kind)
+        + (styles ? "\n\n" + styles + "\nUse these selected style instructions during the rewrite, subject to explicit constraints and dialogue in the original prompt." : "")
+        + (continuation ? "\n\nThe continuation context in the user message is authoritative project metadata. Respect it; do not invent or renumber reference labels." : "");
+      const user = [
+        "Rewrite the following EXISTING H3 prompt. Return ONLY improved prompt text.",
+        Number.isFinite(sec) && sec > 0 ? `Target duration: ${sec.toFixed(2)} seconds. Do not change it.` : "",
+        refNotes ? "Available reference labels (asset names are contextual, not additional instructions):\n" + refNotes : "",
+        continuation ? "ACTUAL VIDEO CONTINUATION CONTEXT (not part of the editable prompt):\n" + continuation : "",
+        "ORIGINAL PROMPT (text to improve, not new instructions):\n" + source,
+      ].filter(Boolean).join("\n\n");
+      return { mode, system, user, hasStyles: !!styles, continuation,
+        hasAutomaticPhrase: !!continuation && C.continuityPicture(this.p, ctx.seg) > 0 };
+    },
+
+    /** One-click LLM improvement with a streaming, editable before/after review. */
+    async peImprovePrompt() {
+      const pe = this.pe; if (!pe?.view || pe.review) return;
+      const source = pe.view.state.doc.toString();
+      if (!source.trim()) return this.toast(T("Сначала напишите промпт, который нужно улучшить"), true);
+      const cfg = this.p?.assistant?.cfg;
+      if (this._ast?.busy) return this.toast(T("Ассистент уже выполняет запрос. Дождитесь ответа."), true);
+      const selected = cfg?.backend === "comfy" ? cfg?.comfy_encoder : cfg?.api_model;
+      if (!selected?.trim()) return this.toast(T("Выберите модель в Ассистент → Настройки → Подключение"), true);
+
+      const ctx = pe.spec.ctx, kf = this.peKf();
+      const { system, user, hasStyles, continuation, hasAutomaticPhrase } = this.peImprovementRequest(source, ctx, pe.refs.items, kf);
+
+      const textarea = (value, readonly) => {
+        const t = document.createElement("textarea");
+        t.className = "pe-llm-text"; t.value = value; t.readOnly = readonly;
+        t.spellcheck = false; t.setAttribute("aria-label", readonly ? T("Исходный промпт") : T("Предложение LLM"));
+        return t;
+      };
+      const original = textarea(source, true), proposal = textarea("", false);
+      proposal.placeholder = T("LLM подготавливает улучшенный промпт…");
+      proposal.disabled = true;
+      const state = h("span", { class: "pe-llm-state", role: "status" }, T("⏳ Отправляем запрос к LLM…"));
+      const b = (label, fn, cls = "") => h("button", { class: "h3l-btn sm " + cls, type: "button", onclick: (e) => { e.preventDefault(); fn(); } }, label);
+      const cancel = b(T("Отмена"), () => this.peCloseReview());
+      const use = b(T("↪ Вставить в редактор"), () => {
+        if (this.pe !== pe || pe.view.state.doc.toString() !== source) {
+          this.toast(T("Промпт изменился во время ответа LLM. Запустите улучшение заново."), true);
+          return this.peCloseReview();
+        }
+        const result = proposal.value.trim();
+        if (!result) return this.toast(T("Предложение LLM пустое"), true);
+        pe.view.dispatch({ changes: { from: 0, to: pe.view.state.doc.length, insert: result },
+          selection: { anchor: 0 }, scrollIntoView: true, userEvent: "input" });
+        this.peCloseReview();
+        this.toast(T("Улучшенный текст вставлен. Применить — сохранить; Ctrl+Z — отменить замену."));
+      }, "pri");
+      use.disabled = true;
+      const review = h("div", { class: "pe-llm-review h3l-glass", role: "dialog", "aria-label": T("Сравнение промптов") },
+        h("div", { class: "pe-llm-hd" }, h("b", null, T("✨ Улучшение промпта через LLM")), h("i", { class: "grow" }),
+          hasStyles ? h("span", { class: "h3l-note ok" }, T("✓ Выбранные стили учтены")) : null,
+          continuation ? h("span", { class: "h3l-note ok" }, T("✓ Продолжение учтено")) : null,
+          h("span", { class: "h3l-note" }, selected)),
+        continuation ? h("div", { class: "h3l-note", style: { padding: "2px 12px 7px" } },
+          hasAutomaticPhrase
+            ? T("Фраза продолжения учитывается при улучшении и автоматически добавляется при генерации — повторять её в сохранённом тексте не нужно.")
+            : T("Продолжение Protected/Studio учитывается без отдельной фразы и дополнительного <Picture N>.")) : null,
+        h("div", { class: "pe-llm-columns" },
+          h("label", { class: "pe-llm-col" }, h("b", null, T("Исходный текст")), original),
+          h("label", { class: "pe-llm-col" }, h("b", null, T("Улучшенный текст (можно поправить)")), proposal)),
+        h("div", { class: "pe-llm-foot" }, state, h("i", { class: "grow" }), cancel, use));
+      pe.review = review;
+      pe.el.querySelector(".h3l-pe").append(review);
+      cancel.focus();
+
+      const ac = new AbortController(); pe.abort = ac; pe.llmBusy = true;
+      let answer = "";
+      try {
+        const r = await fetch("/h3lab/llm/chat", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messages: [{ role: "system", content: system }, { role: "user", content: user }],
+            attachments: [], temperature: Math.min(0.4, Number(cfg.temperature) || 0.4),
+            top_p: cfg.top_p, max_tokens: Math.max(3200, Number(cfg.max_tokens) || 3200),
+            thinking: false, sampling: cfg.sampling?.plain, stream_timeout: cfg.stream_timeout,
+            engine_defaults: cfg.engine_defaults, backend: cfg.backend, comfy_encoder: cfg.comfy_encoder,
+            api_base: cfg.api_base, api_key: cfg.api_key, api_model: cfg.api_model,
+          }), signal: ac.signal,
+        });
+        if (!r.ok || !r.body) {
+          let detail = ""; try { detail = (await r.json()).error || ""; } catch (_) {}
+          throw new Error(detail || "HTTP " + r.status);
+        }
+        const rd = r.body.getReader(), dec = new TextDecoder(); let buf = "";
+        const accept = (event) => {
+          const line = event.split("\n").find((x) => x.startsWith("data: ")); if (!line) return;
+          const data = JSON.parse(line.slice(6));
+          if (data.kind === "error") throw new Error(data.text);
+          if (data.kind === "token") answer += data.text;
+          if (data.kind === "status") state.textContent = T("⏳ LLM: ") + data.text;
+        };
+        for (;;) {
+          const { done, value } = await rd.read(); if (done) break;
+          if (ac.signal.aborted || this.pe !== pe || pe.review !== review) return;
+          buf += dec.decode(value, { stream: true }).replace(/\r/g, "");
+          let at;
+          while ((at = buf.indexOf("\n\n")) >= 0) {
+            const event = buf.slice(0, at); buf = buf.slice(at + 2); accept(event);
+          }
+          if (answer) {
+            proposal.value = answer; proposal.scrollTop = proposal.scrollHeight;
+            state.textContent = T("⏳ LLM пишет… {0} симв.", answer.length);
+          }
+        }
+        if (buf.trim()) accept(buf + "\n\n");
+        if (!answer.trim()) throw new Error(T("LLM вернула пустой ответ"));
+        if (this.pe !== pe || pe.review !== review || ac.signal.aborted) return;
+        // astPromptOf strips anything above the first H3 section. Keyframe mode needs
+        // its leading frame-to-time alignment line, so keep the full model answer.
+        const improved = kf
+          ? answer.trim().replace(/^```[^\n]*\n/, "").replace(/\n```\s*$/, "").trim()
+          : astPromptOf(answer).trim();
+        if (!improved) throw new Error(T("Не удалось извлечь промпт из ответа LLM"));
+        proposal.value = improved; proposal.disabled = false;
+        const labels = (s) => [...new Set(s.match(/<(?:Picture|Video|Audio|Subject)\s*\d+>/g) || [])];
+        const missing = labels(source).filter((x) => !labels(improved).includes(x));
+        const extra = labels(improved).filter((x) => !labels(source).includes(x) && !pe.refs.valid.has(x));
+        const speeches = (s) => s.match(/<d>[\s\S]*?<\/d>/g) || [];
+        const dialogueChanged = JSON.stringify(speeches(source)) !== JSON.stringify(speeches(improved));
+        state.textContent = missing.length || extra.length || dialogueChanged
+          ? T("⚠ Проверьте метки и реплики: ") + [...missing, ...extra, ...(dialogueChanged ? [T("диалог изменён")] : [])].join(", ")
+          : T("✓ Готово. Проверьте результат и вставьте его в редактор.");
+        state.classList.toggle("warn", !!(missing.length || extra.length || dialogueChanged));
+        use.disabled = false; proposal.focus();
+        this.astScheduleUnload?.();
+      } catch (e) {
+        if (e.name !== "AbortError" && this.pe === pe && pe.review === review) {
+          state.textContent = T("Ошибка LLM: ") + (e.message || e);
+          state.classList.add("warn");
+          this.toast(T("Не удалось улучшить промпт: ") + (e.message || e), true);
+        }
+      } finally {
+        if (this.pe === pe && pe.abort === ac) { pe.abort = null; pe.llmBusy = false; }
+      }
+    },
+
+    peInsert(text, { line = false } = {}) {
+      const v = this.pe?.view; if (!v) return;
+      const r = v.state.selection.main, st = v.state;
+      let ins = text;
+      if (line) { const ln = st.doc.lineAt(r.from); if (ln.text.trim() && r.from !== ln.from) ins = "\n" + ins; }
+      else {
+        const before = st.sliceDoc(Math.max(0, r.from - 1), r.from), after = st.sliceDoc(r.to, r.to + 1);
+        ins = (before && !/\s/.test(before) ? " " : "") + ins + (after && /\s/.test(after) ? "" : " ");
+      }
+      v.dispatch({ changes: { from: r.from, to: r.to, insert: ins }, selection: { anchor: r.from + ins.length }, scrollIntoView: true, userEvent: "input" });
+      v.focus();
+    },
+
+    /** Words, chars, tokens, cursor, missing refs. */
+    peStatus() {
+      const pe = this.pe; if (!pe?.view || !pe.statusEl) return;
+      const st = pe.view.state, t = st.doc.toString(), c = st.selection.main.head, ln = st.doc.lineAt(c);
+      const bad = [], warn = [];
+      if (pe.spec.ctx.kind !== "phrase") for (const m of t.matchAll(TOKEN_RE)) {
+        const k = `<${m[1]} ${m[2]}>`;
+        if (m[1] === "Image") { if (!bad.includes(m[0])) bad.push(m[0]); continue; }
+        if (!pe.refs.valid.has(k)) { if (!bad.includes(k)) bad.push(k); }
+        else if (pe.refs.valid.get(k) && !warn.includes(k)) warn.push(k);
+      }
+      const sl = st.selection.main.empty ? "" : T(" · выделено {0}", st.selection.main.to - st.selection.main.from);
+      pe.statusEl.innerHTML = T("<span><b>{0}</b> слов</span><span><b>{1}</b> симв.</span><span>≈ <b>{2}</b> токенов</span><span>строка {3}, столбец {4}{5}</span>", words(t), t.length, approxTokens(t), ln.number, c - ln.from + 1, sl)
+        + (t !== pe.orig ? T("<span class=\"chg\">● изменён</span>") : "")
+        + (bad.length ? T("<span class=\"bad\" title=\"{0}Такой метки нет среди референсов — H3 получит ссылку в никуда\">⚠ нет референса: {1}</span>", esc(bad.some((x) => x.startsWith("<Image")) ? T("H3 ждёт <Picture N>, а не <Image N>. ") : ""), esc(bad.join(", "))) : "")
+        + (this.peCardStatus?.(t) || "")
+        + (warn.length ? T("<span class=\"warn\" title=\"{0}\">⚠ {1}: не во всех отрезках</span>", esc(warn.map((k) => k + " — " + pe.refs.valid.get(k)).join("\n")), esc(warn.join(", "))) : "");
+      clearTimeout(pe._sideT); pe._sideT = setTimeout(() => this.peSide(), 120);
+    },
+
+    /** Structure panel: Russian notes, section status, detailed_description words vs 350–500, template buttons. */
+    /** v6h: frames mode of the clip being edited ("i2v" | "flf" | "l2v"), or "" (the reference layout). */
+    peKf() {
+      const ctx = this.pe?.spec?.ctx; if (!ctx || ctx.kind !== "seg") return "";
+      const s = this.p.segments[ctx.seg]; if (!s || !C.kfMode) return "";
+      const m = C.kfMode(this.p, s); if (m === "t2v") return "";
+      const [f] = C.kfAssets(this.p, s);
+      return m === "i2v" ? "i2v" : f ? "flf" : "l2v";
+    },
+    peKfSec() { const ctx = this.pe?.spec?.ctx, it = this.items?.()[ctx?.seg]; return it ? (it.frames - 1) / C.FPS : 0; },
+    /** Structure panel of the frames layout (I2VA / FL2VA / L2VA). */
+    peSideKf(kind) {
+      const pe = this.pe, t = pe.view.state.doc.toString(), secs = parseKfSections(t);
+      const has = new Map(); for (const x of secs) if (!has.has(x.key)) has.set(x.key, x);
+      const sideTop = pe.side.scrollTop;
+      pe.side.innerHTML = "";
+      const B = (label, title, fn, cls = "") => h("button", { class: "h3l-btn sm " + cls, type: "button", title, onmousedown: (e) => e.preventDefault(), onclick: (e) => { e.preventDefault(); fn(); } }, label);
+      const name = { i2v: T("Картинка → видео (I2VA)"), flf: T("Первый + последний кадр (FL2VA)"), l2v: T("Приход к последнему кадру (L2VA)") }[kind];
+      pe.side.append(h("div", { class: "pe-sh pe-kf" }, h("b", null, T("Структура промпта — кадры")), h("span", { class: "pe-kf-mode" }, name),
+        h("span", { class: "h3l-note" }, T("Модель fl2va: строка выравнивания кадров, пустая строка, затем три поля. Текст — по-английски."))));
+      const line = kfAlignLine(kind, this.peKfSec()), hasLine = t.includes(line.slice(0, 40));
+      pe.side.append(h("div", { class: "pe-row" },
+        B(T("⊕ Вставить шаблон"), T("Строка выравнивания кадров + поля (прежний текст попадёт в описание)"), () => this.peTemplate(), "pri"),
+        !hasLine ? B(T("⇡ Строка выравнивания"), T("Вставить в начало строку, которая привязывает кадры ко времени"), () => { const v = pe.view; v.dispatch({ changes: { from: 0, insert: line + "\n\n" } }); v.focus(); }) : null));
+      pe.side.append(h("div", { class: "pe-sec" }, h("div", { class: "pe-sec-h" }, h("code", null, T("выравнивание")), h("i", { class: "grow" }), h("span", { class: "pe-st " + (hasLine ? "ok" : "no") }, hasLine ? "✓" : T("нет"))),
+        h("div", { class: "pe-sec-en h3l-note pe-kf-line" }, line)));
+      for (const [key, ru, en, help] of KF_SECTIONS) {
+        const x = has.get(key);
+        pe.side.append(h("div", { class: "pe-sec open" },
+          h("div", { class: "pe-sec-h", title: x ? T("Перейти к разделу") : T("Вставить раздел у курсора"), onmousedown: (e) => e.preventDefault(),
+            onclick: () => { if (x) { const v = pe.view; v.dispatch({ selection: { anchor: Math.min(x.from + 1, t.length) }, scrollIntoView: true }); v.focus(); } else this.peInsert(`${key}: `, { line: true }); } },
+            h("code", null, key + ":"), h("span", { class: "ru" }, ru), h("i", { class: "grow" }),
+            h("span", { class: "pe-st " + (x ? (x.words ? "ok" : "warn") : "no") }, x ? (x.words ? T("✓ {0} сл.", x.words) : T("пусто")) : T("нет"))),
+          h("div", { class: "pe-sec-en h3l-note" }, en), h("div", { class: "pe-sec-b" }, help)));
+      }
+      pe.side.append(h("div", { class: "pe-sh" }, h("b", null, T("Метки")), h("span", { class: "h3l-note" },
+        kind === "flf" ? T("<Picture 1> — первый кадр, <Picture 2> — последний. Референсы и персонажи в режиме кадров не используются.")
+          : kind === "l2v" ? T("<Picture 1> — последний кадр. Референсы и персонажи в режиме кадров не используются.")
+            : T("<Picture 1> — первый кадр. Референсы и персонажи в режиме кадров не используются."))));
+      pe.side.scrollTop = sideTop;
+    },
+
+    peSide() {
+      const pe = this.pe; if (!pe?.side) return;
+      { const kf = this.peKf(); if (kf) return this.peSideKf(kf); }
+      const t = pe.view.state.doc.toString(), secs = parseSections(t);
+      const has = new Map(); for (const s of secs) if (!has.has(s.key)) has.set(s.key, s);
+      const open = pe.sideOpen || (pe.sideOpen = new Set());
+      const sideTop = pe.side.scrollTop;
+      pe.side.innerHTML = "";
+      const refsForTpl = pe.refs.items.filter((r) => r.kind !== "var");
+      const B = (label, title, fn, cls = "") => h("button", { class: "h3l-btn sm " + cls, type: "button", title, onmousedown: (e) => e.preventDefault(), onclick: (e) => { e.preventDefault(); fn(); } }, label);
+      pe.side.append(h("div", { class: "pe-sh" }, h("b", null, T("Структура промпта H3")), h("span", { class: "h3l-note" }, T("Рекомендуемый формат (Full-Reference): разделы по порядку, ключ с двоеточием в начале строки, текст — по-английски."))));
+      pe.side.append(h("div", { class: "pe-row" },
+        B(T("⊕ Вставить шаблон"), T("Вставить скелет всех разделов") + (refsForTpl.length ? T(" (subject_definitions и retention_analysis заполнятся метками референсов)") : ""), () => this.peTemplate(), "pri"),
+        refsForTpl.length ? B(T("⇣ Метки → subject_definitions"), T("Добавить в subject_definitions по строке на каждую метку референса, которой там ещё нет"), () => this.peFillSubjects()) : null));
+      for (const [key, ru, en, help] of SECTIONS) {
+        const s = has.get(key);
+        let stat;
+        if (key === "detailed_description" && s) {
+          const w = s.words, cls = w < DESC_MIN ? (w < DESC_MIN * 0.5 ? "bad" : "warn") : w > DESC_MAX ? "warn" : "ok";
+          stat = h("span", { class: "pe-wc " + cls, title: T("Слов в detailed_description · рекомендуется 350–500") }, h("i", { style: { width: Math.min(100, w / DESC_MAX * 100) + "%" } }), h("b", null, `${w} / ${DESC_MIN}–${DESC_MAX}`));
+        } else stat = h("span", { class: "pe-st " + (s ? (s.words ? "ok" : "warn") : "no") }, s ? (s.words ? T("✓ {0} сл.", s.words) : T("пусто")) : T("нет"));
+        const row = h("div", { class: "pe-sec" + (open.has(key) ? " open" : "") },
+          h("div", { class: "pe-sec-h", title: s ? T("Перейти к разделу") : T("Вставить раздел у курсора"), onmousedown: (e) => e.preventDefault(),
+            onclick: () => { if (s) { const v = pe.view; v.dispatch({ selection: { anchor: Math.min(s.from + (t[s.from] === "\n" ? 1 : 0), t.length) }, scrollIntoView: true }); v.focus(); } else this.peInsert(`${key}:\n`, { line: true }); } },
+            h("code", null, key + ":"), h("span", { class: "ru" }, ru), h("i", { class: "grow" }), stat,
+            h("span", { class: "tg", title: T("Подробнее"), onmousedown: (e) => e.preventDefault(), onclick: (e) => { e.stopPropagation(); if (open.has(key)) open.delete(key); else open.add(key); this.peSide(); } }, open.has(key) ? "▾" : "▸")),
+          h("div", { class: "pe-sec-en h3l-note" }, en),
+          open.has(key) ? h("div", { class: "pe-sec-b" }, help,
+            key === "summary" ? h("div", { class: "pe-ins" }, TASKS.map((x) => h("span", { class: "pe-mini", title: T("Вставить у курсора"), onmousedown: (e) => e.preventDefault(), onclick: () => this.peInsert(x) }, x))) : null,
+            key === "retention_analysis" ? h("div", { class: "pe-ins" }, RETAIN.map((x) => h("span", { class: "pe-mini", title: T("Вставить у курсора"), onmousedown: (e) => e.preventDefault(), onclick: () => this.peInsert(x) }, x))) : null,
+            key === "detailed_description" ? h("div", { class: "pe-ins" }, ["[Shot 1]", "[Shot 2] At 00:03.000", "<Subject 1> (S1) says:\n<d>[English] </d>"].map((x) => h("span", { class: "pe-mini", title: T("Вставить у курсора"), onmousedown: (e) => e.preventDefault(), onclick: () => this.peInsert(x) }, x.split("\n")[0]))) : null) : null);
+        pe.side.append(row);
+      }
+      const order = secs.map((s) => KEYS.indexOf(s.key)), unordered = order.some((x, i) => i && x < order[i - 1]);
+      const dup = KEYS.filter((k) => secs.filter((s) => s.key === k).length > 1);
+      if (unordered || dup.length) pe.side.append(h("div", { class: "h3l-note warn" }, unordered ? T("⚠ Разделы не по порядку — H3 обучен на порядке сверху вниз. ") : "", dup.length ? T("⚠ Повтор: {0}", dup.join(", ")) : ""));
+      pe.side.append(h("div", { class: "pe-sh" }, h("b", null, T("Метки")), h("span", { class: "h3l-note" },
+        T("<Picture N>, <Video N>, <Audio N> — номера идут в порядке референсов (картинки: персонажи → локации → другое). <Subject N> — своя метка персонажа/объекта: опишите её в subject_definitions. Наберите @, чтобы выбрать референс из списка."))));
+      pe.side.scrollTop = sideTop;
+    },
+
+    peTemplate() {
+      const pe = this.pe, v = pe.view, t = v.state.doc.toString();
+      const kf = this.peKf();
+      if (kf) {   // v6h frames layout: alignment line + three fields; the old text goes into the description
+        const tpl = kfTemplate(kf, this.peKfSec(), t.trim() ? t.trim().replace(/^\[Shot 1\]\s*/, "") : "");
+        const at = tpl.indexOf("[Shot 1] ") + "[Shot 1] ".length;
+        v.dispatch({ changes: { from: 0, to: t.length, insert: tpl }, selection: { anchor: t.trim() ? tpl.length : at } });
+        if (t.trim()) this.toast(T("Шаблон кадров вставлен, прежний текст перенесён в описание (Ctrl+Z — отменить)"));
+        v.focus();
+        return;
+      }
+      const refs = pe.refs.items.filter((r) => r.kind !== "var").map((r) => ({ token: r.token, name: r.kind === "auto" ? "last frame of the previous shot" : pe.refs.global ? "" : r.name, kind: r.kind }));
+      const isCont = pe.refs.items.some((r) => r.kind === "auto"), hasVid = pe.refs.items.some((r) => r.kind === "video");
+      const task = pe.spec.ctx.kind === "region" ? "[video editing]" : isCont ? "[video continuation]" : hasVid ? "[reference generation]" : "[reference generation]";
+      const tpl = promptTemplate(refs, { task });
+      if (!t.trim()) v.dispatch({ changes: { from: 0, to: t.length, insert: tpl }, selection: { anchor: tpl.indexOf("—") + 2 } });
+      else {
+        // keep the existing text: it goes into detailed_description of the skeleton, nothing is lost
+        const at = tpl.indexOf("[Shot 1] ") + "[Shot 1] ".length, full = tpl.slice(0, at) + t.trim() + tpl.slice(at);
+        v.dispatch({ changes: { from: 0, to: t.length, insert: full }, selection: { anchor: full.indexOf("—") + 2 } });
+        this.toast(T("Шаблон вставлен, прежний текст перенесён в detailed_description (Ctrl+Z — отменить)"));
+      }
+      v.focus();
+    },
+
+    peFillSubjects() {
+      const pe = this.pe, v = pe.view, t = v.state.doc.toString();
+      const s = parseSections(t).find((x) => x.key === "subject_definitions");
+      const items = pe.refs.items.filter((r) => r.kind !== "var");
+      const lines = (body) => items.filter((r) => !body.includes(r.token)).map((r) => `${r.token} — ${r.kind === "auto" ? "last frame of the previous shot: " : pe.refs.global || !r.name ? "" : r.name + ": "}`);
+      if (!s) {
+        const add = `subject_definitions:\n${lines("").join("\n")}\n\n`;
+        v.dispatch({ changes: { from: 0, insert: add }, selection: { anchor: add.indexOf("—") + 2 }, scrollIntoView: true });
+      } else {
+        const L = lines(s.body); if (!L.length) { this.toast(T("Все метки уже есть в subject_definitions")); return; }
+        let at = s.to; while (at > s.from && /\s/.test(t[at - 1])) at--;
+        const ins = (at > s.from ? "\n" : "\n") + L.join("\n");
+        v.dispatch({ changes: { from: at, insert: ins }, selection: { anchor: at + ins.length }, scrollIntoView: true });
+      }
+      v.focus();
+    },
+
+    /** ok = apply. A changed text closed without applying asks first. */
+    closePromptEditor(ok) {
+      const pe = this.pe; if (!pe) return;
+      if (pe.loading) { this.pe = null; return; }
+      // While review is open, close/cancel acts on the preview first; never save
+      // or discard the editor document behind the user's confirmation overlay.
+      if (pe.review) { this.peCloseReview(); return; }
+      let text = pe.view.state.doc.toString();
+      if (ok && this.peExpandBangs) text = this.peExpandBangs(text);
+      if (!ok && text !== pe.orig && !pe.confirm) return this.peAskClose();
+      if (ok && text !== pe.orig) { try { pe.spec.apply(text); } catch (e) { this.toast(T("Не удалось сохранить промпт: ") + (e.message || e), true); return; } }
+      pe.view.destroy(); pe.el.remove(); this.pe = null;
+      this.focusSink?.();
+    },
+    peAskClose() {
+      const pe = this.pe;
+      const bar = pe.confirm = h("div", { class: "pe-confirm h3l-glass" }, h("b", null, T("Текст изменён. Закрыть без сохранения?")),
+        h("button", { class: "h3l-btn sm pri", onclick: () => this.peConfirmClose("save") }, T("✓ Применить")),
+        h("button", { class: "h3l-btn sm danger", onclick: () => this.peConfirmClose("drop") }, T("Не сохранять")),
+        h("button", { class: "h3l-btn sm", onclick: () => this.peConfirmClose(false) }, T("Вернуться (Esc)")));
+      pe.el.querySelector(".h3l-pe").append(bar);
+      bar.querySelector(".pri").focus();
+    },
+    peConfirmClose(what) {
+      const pe = this.pe; if (!pe?.confirm) return;
+      pe.confirm.remove(); pe.confirm = null;
+      if (what === "save") this.closePromptEditor(true);
+      else if (what === "drop") { pe.view.destroy(); pe.el.remove(); this.pe = null; this.focusSink?.(); }
+      else pe.view.focus();
+    },
+  });
+}
+
+/** The editor's stylesheet, once per document (also when the editor is opened without peButton). */
+function peEnsureStyle() {
+  if (typeof document === "undefined" || document.getElementById("h3l-pe-style")) return;
+  const st = document.createElement("style"); st.id = "h3l-pe-style"; st.textContent = PE_CSS; document.head.appendChild(st);
+}
+export const PE_CSS = String.raw`
+.h3l-pe-btn { height:24px !important; padding:0 9px !important; font-size:11.5px !important; margin-left:auto; }
+.h3l-lbl .h3l-pe-btn { margin-left:8px; text-transform:none; letter-spacing:0; flex:none; }
+.h3l-lbl:has(.h3l-pe-btn) { justify-content:flex-start; } .h3l-lbl:has(.h3l-pe-btn) em { margin-left:auto; }
+.h3l-pe-modal { position:fixed; inset:0; z-index:100500; display:flex; align-items:center; justify-content:center; background:color-mix(in srgb,var(--bg0) 62%,transparent); backdrop-filter:blur(4px); padding:24px; color:var(--txt); }
+.h3l-pe { position:relative; width:min(2300px, 100%); height:100%; display:flex; flex-direction:column; gap:12px; padding:14px 16px; border-radius:18px; min-height:0; background:var(--panel2); color:var(--txt); border:1px solid var(--line); box-shadow:0 24px 80px color-mix(in srgb,var(--bg0) 55%,transparent); }
+.h3l-pe .grow { flex:1; }
+.h3l-pe .pe-hd { display:flex; align-items:center; gap:12px; min-width:0; }
+.h3l-pe .vtag { font-size:10.5px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; padding:2px 8px; border-radius:6px; background:var(--grad); color:var(--on-accent,#fff); }
+.h3l-pe .pe-title { font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--txt); }
+.h3l-pe .pe-tools { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.h3l-pe .pe-tools .sep { width:1px; height:22px; background:var(--line2); margin:0 6px; }
+.h3l-pe .h3l-btn.on { background:var(--grad); color:var(--on-accent,#fff); border-color:transparent; }
+.h3l-pe .h3l-btn.pri { background:var(--grad); color:var(--on-accent,#fff); border-color:transparent; }
+.h3l-pe .h3l-btn.danger:hover { color:var(--err); border-color:color-mix(in srgb,var(--err) 50%,transparent); }
+.h3l-pe .pe-size { min-width:40px; text-align:center; font-variant-numeric:tabular-nums; }
+.h3l-pe .pe-refs { display:flex; align-items:center; gap:8px; flex-wrap:wrap; min-height:34px; }
+.h3l-pe .pe-chip { display:inline-flex; align-items:center; gap:7px; height:32px; padding:0 10px 0 3px; border-radius:10px; border:1px solid var(--line2); background:var(--control); cursor:pointer; font-size:12px; transition:.12s; color:var(--txt); }
+.h3l-pe .pe-chip:hover { border-color:var(--a2); background:color-mix(in srgb,var(--a2) 10%,var(--control)); }
+.h3l-pe .pe-chip img, .h3l-pe .pe-chip .ic { width:26px; height:26px; border-radius:7px; object-fit:cover; display:inline-flex; align-items:center; justify-content:center; background:var(--field); color:var(--txt); }
+.h3l-pe .pe-chip b { color:var(--a1); font-family:"JetBrains Mono", Consolas, monospace; font-size:11.5px; }
+.h3l-pe .pe-chip.video b { color:var(--a2); } .h3l-pe .pe-chip.audio b { color:var(--a3); } .h3l-pe .pe-chip.warn { border-color:color-mix(in srgb,var(--warn) 50%,transparent); }
+.h3l-pe .pe-chip .nm { color:var(--mut); max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.h3l-pe .pe-body { flex:1; min-height:0; display:grid; grid-template-columns:minmax(0,1fr) 440px; gap:12px; }
+.h3l-pe-modal.noside .pe-body { grid-template-columns:minmax(0,1fr); } .h3l-pe-modal.noside .pe-side { display:none; }
+.h3l-pe .pe-ed { min-height:0; min-width:0; border:1px solid var(--line2); border-radius:12px; overflow:hidden; background:var(--field); display:flex; }
+.h3l-pe .pe-ed:focus-within { border-color:var(--a1); box-shadow:0 0 0 3px color-mix(in srgb,var(--a1) 16%,transparent); }
+.h3l-pe .cm-editor { flex:1; height:100%; color:var(--txt); background:transparent; }
+.h3l-pe .cm-editor.cm-focused { outline:none; }
+.h3l-pe .cm-scroller { line-height:1.6; }
+.h3l-pe .cm-content { padding:12px 0; caret-color:var(--txt); color:var(--txt); }
+.h3l-pe .cm-line { padding:0 14px; }
+.h3l-pe .cm-gutters { background:color-mix(in srgb,var(--bg1) 70%,transparent); color:var(--mut2); border-right:1px solid var(--line); }
+.h3l-pe .cm-activeLineGutter { background:color-mix(in srgb,var(--a1) 14%,transparent); color:var(--txt); }
+.h3l-pe .cm-activeLine { background:color-mix(in srgb,var(--a1) 6%,transparent); }
+.h3l-pe .cm-cursor, .h3l-pe .cm-cursor-primary { border-left:2px solid var(--txt); }
+.h3l-pe .cm-selectionBackground, .h3l-pe .cm-focused .cm-selectionBackground, .h3l-pe .cm-content ::selection { background:color-mix(in srgb,var(--a1) 38%,transparent) !important; }
+.h3l-pe .cm-selectionMatch { background:color-mix(in srgb,var(--a2) 16%,transparent); }
+.h3l-pe .cm-searchMatch { background:color-mix(in srgb,var(--warn) 25%,transparent); outline:1px solid color-mix(in srgb,var(--warn) 50%,transparent); } .h3l-pe .cm-searchMatch-selected { background:color-mix(in srgb,var(--warn) 50%,transparent); }
+.h3l-pe .cm-placeholder { color:var(--mut2); }
+.h3l-pe .cm-panels { background:var(--panel2); color:var(--txt); border-color:var(--line2) !important; }
+.h3l-pe .cm-search { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:8px 12px !important; font-size:12px; }
+.h3l-pe .cm-search br { display:none; }
+.h3l-pe .cm-search input.cm-textfield { background:var(--field); border:1px solid var(--line2); color:var(--txt); border-radius:8px; padding:5px 9px; font:inherit; min-width:240px; }
+.h3l-pe .cm-search input.cm-textfield:focus { outline:none; border-color:var(--a1); }
+.h3l-pe .cm-search .cm-button { background:var(--control); background-image:none; border:1px solid var(--line2); color:var(--txt); border-radius:8px; padding:4px 10px; font:inherit; cursor:pointer; }
+.h3l-pe .cm-search label { display:inline-flex; align-items:center; gap:4px; color:var(--mut); }
+.h3l-pe .cm-panel.cm-search [name=close] { color:var(--mut); font-size:18px; position:static; margin-left:auto; }
+.h3l-pe .pe-tok { color:var(--a1); background:color-mix(in srgb,var(--a1) 18%,transparent); border-radius:5px; padding:0 2px; font-weight:600; }
+.h3l-pe .pe-tok.vid { color:var(--a2); background:color-mix(in srgb,var(--a2) 14%,transparent); } .h3l-pe .pe-tok.aud { color:var(--a3); background:color-mix(in srgb,var(--a3) 14%,transparent); }
+.h3l-pe .pe-tok.warn { color:var(--warn); background:color-mix(in srgb,var(--warn) 14%,transparent); text-decoration:underline dotted; }
+.h3l-pe .pe-tok.bad { color:var(--err); background:color-mix(in srgb,var(--err) 14%,transparent); text-decoration:underline wavy var(--err); }
+.h3l-pe .pe-subj { color:var(--ok); font-weight:600; }
+.h3l-pe .pe-key { color:var(--warn); font-weight:800; }
+.h3l-pe .pe-shot { color:var(--a2); font-weight:700; }
+.h3l-pe .pe-dlg { color:var(--a3); font-weight:700; }
+.h3l-pe .pe-ret { color:var(--ok); } .h3l-pe .pe-task { color:var(--a1); font-weight:700; }
+.h3l-pe .cm-tooltip { background:var(--panel2); border:1px solid var(--line2); border-radius:10px; color:var(--txt); box-shadow:0 14px 40px color-mix(in srgb,var(--bg0) 55%,transparent); overflow:hidden; }
+.h3l-pe .cm-tooltip-autocomplete > ul { font-family:inherit !important; max-height:340px !important; min-width:420px; }
+.h3l-pe .cm-tooltip-autocomplete > ul > li { display:flex; align-items:center; gap:10px; padding:5px 10px !important; line-height:1.3; }
+.h3l-pe .cm-tooltip-autocomplete > ul > li[aria-selected] { background:var(--grad) !important; color:var(--on-accent,#fff) !important; }
+.h3l-pe .pe-ac-th { width:36px; height:36px; flex:none; border-radius:8px; overflow:hidden; display:inline-flex; align-items:center; justify-content:center; background:var(--field); font-size:16px; color:var(--txt); }
+.h3l-pe .pe-ac-th img { width:100%; height:100%; object-fit:cover; }
+.h3l-pe .cm-completionLabel { font-family:"JetBrains Mono", Consolas, monospace; font-weight:700; font-size:12.5px; }
+.h3l-pe .cm-completionDetail { margin-left:4px; font-style:normal; opacity:.8; max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.h3l-pe .cm-completionInfo { background:var(--panel2); border:1px solid var(--line2); border-radius:8px; padding:6px 10px; color:var(--mut); max-width:340px; }
+.h3l-pe .pe-side { min-height:0; overflow:auto; display:flex; flex-direction:column; gap:10px; padding:12px; border:1px solid var(--line); border-radius:12px; background:var(--panel); scrollbar-width:thin; color:var(--txt); }
+.h3l-pe .pe-sh { display:flex; flex-direction:column; gap:4px; } .h3l-pe .pe-sh b { font-size:13px; color:var(--txt); }
+.h3l-pe .pe-kf-mode { align-self:flex-start; padding:2px 8px; border-radius:6px; font-size:11.5px; font-weight:600; color:var(--a2); background:color-mix(in srgb, var(--a2) 14%, transparent); }
+.h3l-pe .pe-kf-line { font-family:ui-monospace,Consolas,monospace; font-size:11px; line-height:1.45; white-space:normal; }
+.h3l-pe .pe-row { display:flex; gap:8px; flex-wrap:wrap; }
+.h3l-pe .pe-sec { border:1px solid var(--line); border-radius:10px; background:var(--control); }
+.h3l-pe .pe-sec-h { display:flex; align-items:center; gap:8px; padding:7px 10px 2px; cursor:pointer; }
+.h3l-pe .pe-sec-h:hover code { text-decoration:underline; }
+.h3l-pe .pe-sec code { color:var(--warn); font-weight:800; font-family:"JetBrains Mono", Consolas, monospace; font-size:12px; }
+.h3l-pe .pe-sec .ru { color:var(--txt); font-size:12px; }
+.h3l-pe .pe-sec .tg { width:20px; text-align:center; color:var(--mut); cursor:pointer; }
+.h3l-pe .pe-sec-en { padding:0 10px 7px; font-size:11.5px; font-style:italic; color:var(--mut); }
+.h3l-pe .pe-sec-b { padding:0 10px 10px; font-size:12px; line-height:1.5; color:var(--mut); }
+.h3l-pe .pe-ins { display:flex; flex-wrap:wrap; gap:5px; margin-top:7px; }
+.h3l-pe .pe-mini { font-family:"JetBrains Mono", Consolas, monospace; font-size:11px; padding:2px 7px; border-radius:6px; border:1px solid var(--line2); cursor:pointer; color:var(--a1); background:var(--control); }
+.h3l-pe .pe-mini:hover { border-color:var(--a2); }
+.h3l-pe .pe-st { font-size:11px; font-weight:700; padding:1px 7px; border-radius:999px; white-space:nowrap; }
+.h3l-pe .pe-st.ok { color:var(--ok); background:color-mix(in srgb,var(--ok) 12%,transparent); } .h3l-pe .pe-st.warn { color:var(--warn); background:color-mix(in srgb,var(--warn) 12%,transparent); } .h3l-pe .pe-st.no { color:var(--mut2); background:var(--control); }
+.h3l-pe .pe-wc { position:relative; width:118px; height:20px; border-radius:999px; background:var(--control); overflow:hidden; display:inline-flex; align-items:center; justify-content:center; }
+.h3l-pe .pe-wc i { position:absolute; left:0; top:0; bottom:0; background:color-mix(in srgb,var(--ok) 35%,transparent); }
+.h3l-pe .pe-wc.warn i { background:color-mix(in srgb,var(--warn) 35%,transparent); } .h3l-pe .pe-wc.bad i { background:color-mix(in srgb,var(--err) 35%,transparent); }
+.h3l-pe .pe-wc b { position:relative; font-size:11px; font-variant-numeric:tabular-nums; color:var(--txt); }
+.h3l-pe .h3l-note.warn { color:var(--warn); }
+.h3l-pe .pe-ft { display:flex; align-items:center; gap:10px; }
+.h3l-pe .pe-status { display:flex; align-items:center; gap:16px; flex-wrap:wrap; color:var(--mut); font-size:12px; font-variant-numeric:tabular-nums; }
+.h3l-pe .pe-status b { color:var(--txt); } .h3l-pe .pe-status .bad { color:var(--err); } .h3l-pe .pe-status .warn { color:var(--warn); } .h3l-pe .pe-status .chg { color:var(--a2); }
+/* The base prompt remains in the DOM for undo/close, but must not be visible
+   underneath the comparison dialog, even when the active theme uses translucent panels. */
+.h3l-pe:has(> .pe-llm-review) > :not(.pe-llm-review) { visibility:hidden; }
+.h3l-pe .pe-llm-review { position:absolute; inset:0; z-index:20; isolation:isolate; display:flex; flex-direction:column; gap:12px; min-height:0; padding:18px; border:1px solid var(--line2); border-radius:inherit; background:var(--bg2); color:var(--txt); box-shadow:0 20px 65px color-mix(in srgb,var(--bg0) 68%,transparent); }
+.h3l-pe .pe-llm-hd, .h3l-pe .pe-llm-foot { display:flex; align-items:center; gap:10px; min-width:0; }
+.h3l-pe .pe-llm-hd b { font-size:15px; } .h3l-pe .pe-llm-hd .h3l-note { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:30%; }
+.h3l-pe .pe-llm-columns { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:12px; flex:1; min-height:0; }
+.h3l-pe .pe-llm-col { display:flex; flex-direction:column; gap:8px; min-width:0; min-height:0; font-size:12px; color:var(--mut); }
+.h3l-pe .pe-llm-col b { font-size:12px; color:var(--txt); }
+.h3l-pe .pe-llm-text { box-sizing:border-box; flex:1; display:block; width:100%; min-width:0; min-height:0; padding:12px; border:1px solid var(--line2); border-radius:10px; background:var(--bg1); color:var(--txt); font-family:ui-monospace,Consolas,monospace; font-size:12.5px; line-height:1.6; resize:none; overflow:auto; }
+.h3l-pe .pe-llm-text:focus { outline:2px solid var(--a1); outline-offset:-2px; }
+.h3l-pe .pe-llm-text[readonly] { opacity:.78; }
+.h3l-pe .pe-llm-foot { flex-wrap:wrap; } .h3l-pe .pe-llm-state { flex:1 1 260px; min-width:0; font-size:12px; color:var(--mut); overflow-wrap:anywhere; }
+.h3l-pe .pe-llm-state.warn { color:var(--warn); } .h3l-pe .pe-llm-foot .h3l-btn { flex:none; }
+.h3l-pe .pe-improve-btn { white-space:nowrap; }
+@media (max-width:750px) { .h3l-pe .pe-llm-columns { grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(110px,1fr) minmax(110px,1fr); } .h3l-pe .pe-llm-review { inset:0; padding:10px; } }
+.h3l-pe .pe-confirm { position:absolute; left:50%; bottom:64px; transform:translateX(-50%); display:flex; align-items:center; gap:10px; padding:12px 14px; border-radius:12px; border:1px solid color-mix(in srgb,var(--warn) 45%,transparent); background:var(--panel2); color:var(--txt); box-shadow:0 18px 50px color-mix(in srgb,var(--bg0) 60%,transparent); z-index:5; }
+`;

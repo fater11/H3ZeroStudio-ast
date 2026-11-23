@@ -1,0 +1,52 @@
+# Python / tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+*.egg-info/
+
+# partial downloads / logs / archives
+*.part
+*.log
+*.tmp
+*.zip
+*.tar
+*.7z
+
+# models and weights — never commit (they live in ComfyUI/models)
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.gguf
+*.onnx
+
+# generated media / test outputs (screenshots for the README live in docs/images)
+output/
+outputs/
+input/
+*.mp4
+*.webm
+*.mov
+*.wav
+*.flac
+*.mp3
+# the one exception: the promo video shown at the top of the README
+!docs/promo.mp4
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# user-installed drop-in UI themes (survive outside the node via ComfyUI user dir)
+themes_user/
+node_modules/
+tests/harness/node_modules
+**/node_modules

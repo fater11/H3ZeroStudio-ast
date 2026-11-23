@@ -1,0 +1,60 @@
+"""CPU regression checks for the disk-backed H3Studio colour-frame cache."""
+import importlib.util
+from pathlib import Path
+
+import torch
+
+
+PLUGIN = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location("h3studio_cache_under_test", PLUGIN / "h3s_studio_cache.py")
+cache = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(cache)
+
+
+def test_studio_rgb8_roundtrip_is_pixel_identical(tmp_path):
+    frames = (torch.arange(7 * 20 * 16 * 3).reshape(7, 20, 16, 3).float() / 103.0).fmod(1.0)
+    stats = torch.tensor([51.3, 4.2, -3.5, 18.4, 8.8, 6.2], dtype=torch.float32)
+    key = cache.identity("take-0", "take-0", None, {"frames": 7, "link": "start", "overlap": 0}, 16, 20, 24)
+    assert cache.save(str(tmp_path), key, frames, stats)
+    got, original_stats = cache.load(str(tmp_path), key, 7)
+    assert torch.equal(got, cache.quantize(frames.clone()))
+    assert original_stats == stats.tolist()
+    assert cache.load(str(tmp_path), key, 6) is None
+
+
+def test_studio_cache_tracks_chain_and_colour_changes():
+    one = {"frames": 7, "link": "extend", "overlap": 2}
+    two = {"frames": 7, "link": "extend", "overlap": 3}
+    key = cache.identity("take-B", "take-A", "prev-1", one, 16, 20, 24)
+    assert key != cache.identity("take-C", "take-A", "prev-1", one, 16, 20, 24)
+    assert key != cache.identity("take-B", "take-A2", "prev-1", one, 16, 20, 24)
+    assert key != cache.identity("take-B", "take-A", "prev-2", one, 16, 20, 24)
+    assert key != cache.identity("take-B", "take-A", "prev-1", two, 16, 20, 24)
+
+
+def test_broken_studio_cache_is_ignored_and_repairable(tmp_path):
+    frames = torch.zeros((2, 8, 8, 3), dtype=torch.float32)
+    key = cache.identity("take", "take", None, {"frames": 2, "link": "start", "overlap": 0}, 8, 8, 24)
+    assert cache.save(str(tmp_path), key, frames)
+    cache_file = Path(cache.path_for(str(tmp_path), key))
+    cache_file.write_bytes(b"not a zip")
+    assert cache.load(str(tmp_path), key, 2) is None
+    assert cache.save(str(tmp_path), key, frames)
+    result = cache.load(str(tmp_path), key, 2)
+    assert result is not None and torch.equal(result[0], frames)
+    assert not list(cache_file.parent.glob("*.part"))
+
+
+def test_studio_cache_reads_multiple_blocks_without_whole_video_concat(tmp_path, monkeypatch):
+    frames = torch.rand((37, 28, 32, 3), dtype=torch.float32)
+    key = cache.identity("take", "first", "previous", {"frames": 37, "link": "extend", "overlap": 1}, 32, 28, 24)
+    expected = cache.quantize(frames)
+    assert cache.save(str(tmp_path), key, frames)
+
+    def forbid_concat(*args, **kwargs):
+        raise AssertionError("RGB cache loader should fill a preallocated tensor")
+
+    monkeypatch.setattr(cache.torch, "cat", forbid_concat)
+    loaded, stats = cache.load(str(tmp_path), key, 37)
+    assert stats is None
+    assert torch.equal(loaded, expected)

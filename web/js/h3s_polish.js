@@ -1,0 +1,150 @@
+// H3ZeroStudio: CapCut-style frame thumbnails on clips, hover scrubbing, clip context menu, live sampling preview.
+import { splitGlyph } from "./h3s_menus.js";
+import { T } from "./h3s_i18n.js";
+import { uiPlaceAtClient } from "./h3s_ui_scale.js";
+export function installPolish(Editor, { C, h, ICON }) {
+  Object.assign(Editor.prototype, {
+    /** Tile the generated sprite over the clip: as many thumbnails as fit, each showing the frame under it. */
+    clipThumbs(clip, res, it, ov, wd, fileOff = 0) {   // fileOff: footage in-point (frames into the file)
+      const box = h("div", { class: "strip" });
+      if (!res.strip_n) { box.style.backgroundImage = `url("${this.host.url(res.strip)}")`; clip.append(box); return; }
+      const clipH = this.timelineVideoHeight || 110;
+      const [w, hh] = C.resolution(this.p.settings), n = res.strip_n;
+      const MAXT = 200;   // DOM cap per clip: when the clip is wider than MAXT natural tiles (high zoom) the tiles are widened to still cover it all
+      const tw = Math.max(24, clipH * w / hh, wd / MAXT);
+      const url = this.host.url(res.strip), frames = res.frames || it.frames;
+      box.classList.add("tiles");
+      const count = Math.min(MAXT, Math.ceil(wd / tw));
+      for (let k = 0; k < count; k++) {
+        const f = fileOff + ov + (k * tw + tw / 2) / this.ppf;
+        const idx = Math.max(0, Math.min(n - 1, Math.floor(f / frames * n)));
+        box.append(h("i", { style: { left: k * tw + "px", width: tw + "px", backgroundImage: `url("${url}")`, backgroundSize: `${n * tw}px ${clipH}px`, backgroundPosition: `${-idx * tw}px 0` } }));
+      }
+      clip.append(box);
+    },
+
+    clipHover(clip, i) {
+      clip.addEventListener("pointermove", (e) => {
+        if (e.buttons) return this.hideHover();
+        const s = this.p.segments[i], res = s?.result, it = this.items()[i];
+        if (!res?.strip_n || !it) return this.hideHover();
+        const r = clip.getBoundingClientRect(), ov = i > 0 ? it.overlap : 0;
+        const f = ov + (e.clientX - r.left) / this.uiS / this.ppf, n = res.strip_n, frames = res.frames || it.frames;
+        const idx = Math.max(0, Math.min(n - 1, Math.floor(f / frames * n)));
+        const [w, hh] = C.resolution(this.p.settings), W = 176, H = Math.round(W * hh / w);
+        let hv = this.$.hover;
+        if (!hv) { hv = this.$.hover = h("div", { class: "h3l-hover" }, h("div", { class: "im" }), h("span")); this.root.append(hv); }
+        const im = hv.firstChild;
+        im.style.width = W + "px"; im.style.height = H + "px";
+        im.style.backgroundImage = `url("${this.host.url(res.strip)}")`;
+        im.style.backgroundSize = `${n * W}px ${H}px`; im.style.backgroundPosition = `${-idx * W}px 0`;
+        hv.lastChild.textContent = T("{0} · отрезок {1}", C.fmtTime((it.start + f) / C.FPS), i + 1);
+        uiPlaceAtClient(e.clientX - W / 2 - 12, r.top, hv, this.root, { offsetX: 12, offsetY: -(H + 34) });
+        this.showHover(hv, clip);
+      });
+      clip.addEventListener("pointerleave", () => this.hideHover());
+    },
+
+    /** Show a hover popup for target. Safeguard: it hides by itself once the target is gone (clip deleted, timeline
+     *  re-rendered, editor closed) or no longer under the cursor; also on Esc, context menu, window blur, tab switch. */
+    showHover(hv, target) {
+      hv.style.display = "block"; this._hoverT = target;
+      if (!this._hoverGuards) {
+        this._hoverGuards = true;
+        const hide = () => this.hideHover();
+        window.addEventListener("blur", hide);
+        document.addEventListener("visibilitychange", hide);
+        window.addEventListener("contextmenu", hide, true);
+        window.addEventListener("keydown", (e) => { if (e.key === "Escape") hide(); }, true);
+        window.addEventListener("pointerdown", hide, true);
+      }
+      if (!this._hoverIv) this._hoverIv = setInterval(() => {
+        const t = this._hoverT;
+        if (!t || !t.isConnected || !this.root?.isConnected || !t.matches(":hover")) this.hideHover();
+      }, 150);
+    },
+    hideHover() {
+      if (this.$?.hover) this.$.hover.style.display = "none";
+      this._hoverT = null; clearInterval(this._hoverIv); this._hoverIv = 0;
+    },
+
+    closeMenu() {
+      if (this.$.menu) { this.$.menu.remove(); this.$.menu = null; }
+      if (this._menuOff) { window.removeEventListener("pointerdown", this._menuOff, true); this._menuOff = null; }
+      if (this._menuKeyOff) { window.removeEventListener("keydown", this._menuKeyOff, true); this._menuKeyOff = null; }
+      this._ddAnchor = null;
+    },
+
+    /** Live per-step preview from the backend ("live" event): animated latent->RGB frames over the player. */
+    onLiveFrames(d) {
+      if (!this.run.active) return;
+      this.lastLive = d;
+      if (!this.root || this.followRun === false) return; // manual browsing keeps the video uncovered
+      const $ = this.$;
+      if (d.seg !== this.sel && this.seg(d.seg)) {
+        this.sel = d.seg; this.pvMode = "segment";
+        this.renderInspector(); this.renderTimeline(); this.renderPreview();
+      }
+      if (!$.live || !$.live.isConnected) {
+        const cv = h("canvas");
+        $.live = h("div", { class: "h3l-live" }, cv,
+          h("div", { class: "h3l-badge-live rec" }, h("i"), h("span")),
+          h("div", { class: "h3l-live-pg" }, h("i")));
+        $.frame.append($.live);
+        this.livePlayer = new SpritePlayer(cv);
+      }
+      d.audio = null;   // live preview is silent
+      this.livePlayer.setVolume(this.vol?.v ?? 1, !!this.vol?.muted || !this.userGesture);
+      this.livePlayer.set(d);
+      $.live.querySelector(".h3l-badge-live span").textContent = T("Генерация · отрезок {0}{1} · шаг {2}/{3} · ", d.seg + 1, this.run?.phase === "draft" ? T(" · черновик") : this.run?.phase === "refine" ? T(" · доработка ↑") : this.run?.phase === "upscale" ? T(" · апскейл ↑ (смешанный кадр)") : String(this.run?.phase || "").startsWith("face_") ? T(" · лицо (кроп 768²)") : "", d.step, d.steps) + (d.mode === "taeh3" ? "tiny VAE taeh3" : T("превью латента"));
+      $.live.querySelector(".h3l-live-pg i").style.width = (d.step / d.steps * 100).toFixed(1) + "%";
+    },
+
+    hideLive() {
+      this.livePlayer?.stop(); this.livePlayer = null;
+      if (this.$.live) { this.$.live.remove(); this.$.live = null; }
+      this.$.tileOv?.remove(); this.$.tileOv = null;
+    },
+  });
+}
+
+/** Plays a horizontal JPEG sprite of N frames (each shown dur[k]/24 s) on a canvas, looping. */
+export class SpritePlayer {
+  /** Plays a live-preview sprite (grid of tiles, `cols` per row) on a canvas on a wall clock, so a new
+   *  sprite continues at the same moment; an optional audio URL (decoded audio of the step) plays in sync. */
+  constructor(canvas) { this.cv = canvas; this.img = new Image(); this.d = null; this.k = 0; this.t0 = 0; this._raf = 0; this.audio = null; this.url = null; this.volume = 1; this.muted = false; }
+  set(d) {
+    const img = new Image();
+    img.onload = () => {
+      const fresh = !this.d;
+      this.img = img; this.d = d;
+      this.starts = []; let acc = 0; for (let j = 0; j < d.n; j++) { this.starts.push(acc); acc += (d.dur?.[j] || 4); }
+      this.total = Math.max(1, acc) / 24 * 1000;
+      if (fresh) { this.t0 = performance.now(); this.loop(); }
+    };
+    img.src = d.img;
+  }
+  setVolume(v, muted) { this.volume = v; this.muted = muted; if (this.audio) this.audio.volume = muted ? 0 : v; }
+  clock() { return ((performance.now() - this.t0) % (this.total || 1000) + (this.total || 1000)) % (this.total || 1000); }
+  frameAt(ms) { const f = ms / 1000 * 24, st = this.starts || [0]; let k = 0; while (k + 1 < st.length && st[k + 1] <= f) k++; return k; }
+  loop() {
+    cancelAnimationFrame(this._raf);
+    const tick = () => {
+      const d = this.d; if (!d || !this.cv.isConnected) { this.audio?.pause(); return; }
+      const cv = this.cv, W = cv.clientWidth || d.tw, H = cv.clientHeight || d.th, dpr = Math.min(2, window.devicePixelRatio || 1);
+      if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+      const t = this.clock();
+      if (this.audio && !this.audio.paused && Math.abs(this.audio.currentTime * 1000 - t) > 250 && this.audio.duration) { try { this.audio.currentTime = t / 1000; } catch (e) {} }
+      this.k = Math.min(d.n - 1, this.frameAt(t));
+      const cols = d.cols || d.n, sx = (this.k % cols) * d.tw, sy = Math.floor(this.k / cols) * d.th;
+      const g = cv.getContext("2d");
+      g.imageSmoothingEnabled = true; g.imageSmoothingQuality = "high";
+      const sc = Math.min(cv.width / d.tw, cv.height / d.th), w = d.tw * sc, hh = d.th * sc;
+      g.fillStyle = "#000"; g.fillRect(0, 0, cv.width, cv.height);
+      g.drawImage(this.img, sx, sy, d.tw, d.th, (cv.width - w) / 2, (cv.height - hh) / 2, w, hh);
+      this._raf = requestAnimationFrame(tick);
+    };
+    this._raf = requestAnimationFrame(tick);
+  }
+  stop() { cancelAnimationFrame(this._raf); this.d = null; this.audio?.pause(); this.audio = null; this.audioSrc = null; }
+}
