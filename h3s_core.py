@@ -84,6 +84,10 @@ DEFAULT_SETTINGS = {
     "vram_headroom_gb": 0.0,   # VRAM kept free while sampling / decoding (ComfyUI's reserve, never lowered); off by default: a reserve makes ComfyUI load the model partially (up to ~2x slower steps on 12 GB cards)
     # live preview while sampling (do not affect the cache keys)
     "preview_tiny_vae": "auto", "preview_max_res": 512, "preview_quality": 80, "preview_frames": 48,
+    "swap_expand": 16,           # px the person mask grows before the paste (0 = off)
+    "swap_feather": 12,          # px of the soft edge of the paste (0 = hard edge)
+    "swap_fill_holes": True,     # close the holes inside the silhouette (glasses, gaps)
+    "swap_temporal_expand": 2,   # frames the mask is unioned with (fast motion)
     "refine_prompt": "",          # the second pass prompt ("" = the segment prompt); a detail brief keeps the scene
     "export_grain": 0.0,         # film grain in the final MP4 only (0 = off; 0.005 is a good start)
     "export_preset": "",         # CPU x264 preset of the final MP4 ("" = medium), slower = better compression
@@ -152,6 +156,7 @@ GLOBAL_KEYS = ("final_mode", "piflow_steps", "piflow_lora2", "piflow_lora4", "st
                "continuity_phrase", "ref_size", "cache", "resume_only", "audio_seam_lock", "audio_xfade", "audio_xfade_sec", "audio_match", "audio_declick", "level_lock", "level_lock_frames", "magnet", "vram_headroom_gb",
                "preview_tiny_vae", "preview_max_res", "preview_quality", "preview_frames", "preview_fps", "preview_suppress",
                "refine_prompt", "export_grain", "export_preset",
+               "swap_expand", "swap_feather", "swap_fill_holes", "swap_temporal_expand",
                "verbose_log", "accel", "memsave")
 
 
@@ -2307,6 +2312,9 @@ def segment_keys(project, ref_sigs=None, env_sig="", kind=None, up_env="", parts
             # the noise field is keyed by the absolute frame: the same clip at another place on the
             # timeline samples other noise, so its place belongs to the key
             "at": it["start"],
+            # the shape of the swap mask is part of the result: it changes the pasted pixels
+            **({"swapcfg": [s.get("swap_expand"), s.get("swap_feather"), s.get("swap_fill_holes"),
+                            s.get("swap_temporal_expand")]} if (seg.get("source") or {}).get("swap") else {}),
             "prompt": compose_prompt(project, i), "neg": s.get("negative") or "",
             "refs": [[a["id"], *asset_kf(a), ref_sigs.get(a["id"], "")] for a in ordered_refs(project, seg)],
             "params": pass_params(project, i, kind), **({"piflow_env": s.get("_piflow_env")} if s.get("piflow_steps") else {}), "luna_two_resolution": "high_denoise_065_v1" if s.get("final_mode") == "luna" and kind == "full" else False, "luna_upscale": s.get("_luna_upscale_env") if s.get("final_mode") == "luna" else None, "pass2": s.get("_pass2_external") if s.get("final_mode") == "luna" and kind == "full" else None, "lock": bool(s.get("lock_overlap", True)),

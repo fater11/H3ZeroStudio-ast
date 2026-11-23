@@ -382,3 +382,18 @@ def test_real_mp4_cut_detector_matches_frame_indices(tmp_path):
     cuts = sm.detect_shot_cuts(str(path), 54)
     assert cuts == (24,), f"scene cut must be precisely aligned, got {cuts}"
     assert sm.detect_shot_cuts(str(path), 12) == (), "prefix must reuse full-video scan"
+
+
+def test_shape_mask_fills_holes_expands_and_feathers():
+    """The swap mask post-processing: fill the holes, grow the silhouette, soften the edge."""
+    import numpy as np
+    m = np.zeros((40, 40), dtype=np.float32)
+    m[10:30, 10:30] = 1.0
+    m[15:20, 15:20] = 0.0        # a hole (glasses)
+    out = sm.shape_mask(m, {"fill_holes": True, "expand": 0, "feather": 0})
+    assert out[17, 17] == 1, "the hole is closed"
+    assert out.sum() == 400 == m.sum() + 25, "only the hole was filled"
+    grown = sm.shape_mask(m, {"fill_holes": False, "expand": 3, "feather": 0})
+    assert grown.sum() > m.sum(), "the silhouette grows"
+    soft = sm.shape_mask(m, {"fill_holes": False, "expand": 0, "feather": 6})
+    assert 0 < float(soft.max()) <= 1 and (soft > 0).sum() > (m > 0).sum(), "the edge is soft"

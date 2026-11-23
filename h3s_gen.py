@@ -3610,9 +3610,13 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                 notify("phase", seg=i, phase="swap_mask", fd=0,
                        fn=mask_src["in"] + int(frames.shape[0]), stage="track")
                 t_mask = time.perf_counter()
+                mask_cfg = dict(mask_src["swap_mask"])
+                mask_cfg["cfg"] = {"expand": s.get("swap_expand", 16), "feather": s.get("swap_feather", 12),
+                                   "fill_holes": s.get("swap_fill_holes", True),
+                                   "temporal_expand": s.get("swap_temporal_expand", 2)}
                 frames, mask_info = h3s_swap_mask.composite(
                     asset_path(by_id[mask_src["asset"]]), mask_src["in"], frames,
-                    mask_src["swap_mask"], d,
+                    mask_cfg, d,
                     progress=lambda fd, fn, stage: notify(
                         "phase", seg=i, phase="swap_mask", fd=fd, fn=fn, stage=stage))
                 v = vae.encode(frames).float().cpu()

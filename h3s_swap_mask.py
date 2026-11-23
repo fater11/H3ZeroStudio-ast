@@ -523,6 +523,33 @@ def _restart_index(segment_masks):
     return None
 
 
+def shape_mask(mask, cfg=None):
+    """Mask post-processing before the composite (values in video pixels).
+
+    fill_holes — close the interior holes (glasses, gaps between the arms);
+    expand — grow the silhouette so the cut edge keeps the original outline;
+    feather — soften the border so the paste does not look cut out.
+    """
+    import cv2
+    cfg = cfg or {}
+    m = (np.asarray(mask) > .5).astype(np.uint8)
+    if cfg.get("fill_holes", True):
+        h, w = m.shape[:2]
+        inv = (1 - m).astype(np.uint8)
+        ff = np.zeros((h + 2, w + 2), np.uint8)
+        cv2.floodFill(inv, ff, (0, 0), 2)
+        # the background the flood did not reach is enclosed by the silhouette -> a hole
+        m = np.where(inv == 1, 1, m).astype(np.uint8)
+    expand = float(cfg.get("expand", 0) or 0)
+    if expand >= 1:
+        k = int(round(expand)) * 2 + 1
+        m = cv2.dilate(m, np.ones((k, k), np.uint8))
+    feather = float(cfg.get("feather", 0) or 0)
+    if feather >= 1:
+        m = cv2.GaussianBlur(m.astype(np.float32), (0, 0), max(0.6, feather / 3.0))
+    return m
+
+
 def composite(path, src_in, generated, mask_config, project_dir, progress=None):
     """Keep original pixels outside the selected SAM mask, preserving the guide background."""
     import cv2
@@ -542,6 +569,9 @@ def composite(path, src_in, generated, mask_config, project_dir, progress=None):
     processed = 0
     active = 0
     guarded = 0
+    mask_cfg = mask_config.get("cfg") or {}
+    temporal = max(0, int(mask_cfg.get("temporal_expand", 0) or 0))
+    hist = []          # the last masks (track resolution) for the temporal union
     use_guard = mask_config.get("guard") is True
     previous = None
     # The previous source frame is vital across segment boundaries: do not accept
@@ -565,6 +595,13 @@ def composite(path, src_in, generated, mask_config, project_dir, progress=None):
                 masks = _load_block(_block_path(folder, block))
                 loaded_block = block
             small = masks[index % BLOCK]
+            if temporal:
+                # union with the neighbouring masks: fast motion keeps a part of the person a frame late
+                hist.append(np.asarray(small))
+                if len(hist) > 2 * temporal + 1:
+                    hist.pop(0)
+                if len(hist) > 1:
+                    small = np.maximum.reduce(hist)
             if index in cuts:
                 previous = None  # New camera shot is not a one-frame identity teleport.
             if float(small.mean()) < .001:
@@ -581,8 +618,7 @@ def composite(path, src_in, generated, mask_config, project_dir, progress=None):
                     previous = current
             active += 1
             up = cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
-            up = cv2.dilate(up, np.ones((5, 5), np.uint8))
-            up = cv2.GaussianBlur(up, (0, 0), 3.0)
+            up = shape_mask(up, mask_cfg)
             weight = torch.from_numpy(np.clip(up[..., None], 0, 1).astype(np.float32))
             original = torch.from_numpy(np.asarray(source[j]).copy())
             generated[start + j] = (generated[start + j] * weight + original * (1 - weight)).clamp(0, 1)
