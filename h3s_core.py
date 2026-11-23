@@ -92,7 +92,8 @@ DEFAULT_SETTINGS = {
     "quality": "final",        # "final" | "draft"
     "final_mode": "full",      # "full" | "refine" (switched to "refine" when the user first turns drafts on)
     "piflow_steps": 0,        # 0 = normal H3; 2/4 = LakonLab pi-H3 DWD (pruned base only)
-    "piflow_lora": "",         # the DWD adapter file ("" = pi_h3_<n>step_dwd_adapter_int8_convrot.safetensors in models/loras)
+    "piflow_lora2": "",        # the DWD adapter for the 2-step schedule ("" = the built-in file in models/loras)
+    "piflow_lora4": "",        # the DWD adapter for the 4-step schedule ("" = the built-in file in models/loras)
     "draft_scale": 0.5,        # linear size of the draft (0.5 = a quarter of the pixels)
     "lowhigh_low_steps": 0,    # Low/High: 0 = 2/3 of total steps automatically
     "lowhigh_scale": 0.60,     # Low Res linear fraction of the final width and height
@@ -138,7 +139,7 @@ DEFAULT_SETTINGS = {
 STAGE_KEYS = ("draft_sampler", "draft_scheduler", "draft_cfg", "refine_sampler", "refine_scheduler", "refine_cfg")
 RUN_KINDS = ("draft", "refine", "full")
 # «Настройки»: set-once settings shared by all projects (unless a project keeps its own: settings_scope="project")
-GLOBAL_KEYS = ("final_mode", "piflow_steps", "piflow_lora", "steps", "cfg", "denoise", "sampler", "scheduler", "shift_video", "shift_audio",
+GLOBAL_KEYS = ("final_mode", "piflow_steps", "piflow_lora2", "piflow_lora4", "steps", "cfg", "denoise", "sampler", "scheduler", "shift_video", "shift_audio",
                "lowhigh_low_steps", "lowhigh_scale", "lowhigh_denoise", "high_sigma_schedule",
                "draft_scale", "draft_steps", "draft_sampler", "draft_scheduler", "draft_cfg",
                "refine_sigma", "refine_schedule_mode", "refine_denoise", "refine_identity_images", "refine_steps", "refine_seed", "refine_sampler", "refine_scheduler", "refine_cfg",
@@ -870,7 +871,15 @@ def normalize_project(p):
     st["quality"] = "draft" if st.get("quality") == "draft" else "final"
     st["final_mode"] = st.get("final_mode") if st.get("final_mode") in ("refine", "luna") else "full"
     st["piflow_steps"] = int(_num(st.get("piflow_steps"), 0)) if int(_num(st.get("piflow_steps"), 0)) in (2, 4) and st["final_mode"] == "full" else 0
-    st["piflow_lora"] = str(st.get("piflow_lora") or "").strip()[:200]
+    st["piflow_lora2"] = str(st.get("piflow_lora2") or "").strip()[:200]
+    st["piflow_lora4"] = str(st.get("piflow_lora4") or "").strip()[:200]
+    # one-off: the former single field became the binding of the step count it was picked for
+    legacy_lora = str(st.get("piflow_lora") or "").strip()[:200]
+    if legacy_lora:
+        key = "piflow_lora4" if int(_num(st.get("piflow_steps"), 0)) == 4 else "piflow_lora2"
+        if not st[key]:
+            st[key] = legacy_lora
+    st.pop("piflow_lora", None)
     st["lowhigh_low_steps"] = max(0, min(199, int(_num(st.get("lowhigh_low_steps"), 0))))
     st["lowhigh_scale"] = _round(max(0.25, min(1.0, _num(st.get("lowhigh_scale"), 0.60))), 3)
     st["lowhigh_denoise"] = _round(max(0.10, min(1.0, _num(st.get("lowhigh_denoise"), 0.65))), 3)

@@ -30,7 +30,7 @@ export const DEFAULT_SETTINGS = {
   preview_fps: 0, preview_suppress: true, preview_audio: true,
   verbose_log: true,
   // draft mode (see h3s_core.py): quality "final" | "draft"; final_mode "full" | "refine" (final from the draft)
-  quality: "final", final_mode: "full", piflow_steps: 0, piflow_lora: "", draft_scale: 0.5, draft_steps: 0, lowhigh_low_steps: 0, lowhigh_scale: 0.60, lowhigh_denoise: 0.65, high_sigma_schedule: "default", refine_sigma: 0.4, refine_schedule_mode: "sigma", refine_denoise: 0.30, refine_identity_images: false, refine_steps: 0, refine_seed: -1, upscale_method: "learned", upscale_rev: 5, seg_upscale: { method: "latent", scale: 2 }, upscale_chunk_sec: 5.0, upscale_chunk_overlap: 1, upscale_profiles: null,
+  quality: "final", final_mode: "full", piflow_steps: 0, piflow_lora2: "", piflow_lora4: "", draft_scale: 0.5, draft_steps: 0, lowhigh_low_steps: 0, lowhigh_scale: 0.60, lowhigh_denoise: 0.65, high_sigma_schedule: "default", refine_sigma: 0.4, refine_schedule_mode: "sigma", refine_denoise: 0.30, refine_identity_images: false, refine_steps: 0, refine_seed: -1, upscale_method: "learned", upscale_rev: 5, seg_upscale: { method: "latent", scale: 2 }, upscale_chunk_sec: 5.0, upscale_chunk_overlap: 1, upscale_profiles: null,
   draft_sampler: "", draft_scheduler: "", draft_cfg: 0, refine_sampler: "", refine_scheduler: "", refine_cfg: 0, settings_scope: "project",
   // «custom SIGMAS» schedules (with the scheduler of the same level): "1.0, 0.5, 0.0" — the exact list
   // replaces the model's curve, the step count is len − 1
@@ -241,7 +241,7 @@ export const upscalable = (seg) => !!seg.upscale && !(seg.freeze && seg.freeze.u
 export const STAGE_KEYS = ["draft_sampler", "draft_scheduler", "draft_cfg", "refine_sampler", "refine_scheduler", "refine_cfg"];
 export const RUN_KINDS = ["draft", "refine", "full"];
 /** «Настройки»: set-once settings shared by all projects (mirror of h3s_core.GLOBAL_KEYS). */
-export const GLOBAL_KEYS = ["final_mode", "piflow_steps", "piflow_lora", "steps", "cfg", "denoise", "sampler", "scheduler", "shift_video", "shift_audio",
+export const GLOBAL_KEYS = ["final_mode", "piflow_steps", "piflow_lora2", "piflow_lora4", "steps", "cfg", "denoise", "sampler", "scheduler", "shift_video", "shift_audio",
                "lowhigh_low_steps", "lowhigh_scale", "lowhigh_denoise", "high_sigma_schedule",
                "draft_scale", "draft_steps", "draft_sampler", "draft_scheduler", "draft_cfg",
                "refine_sigma", "refine_schedule_mode", "refine_denoise", "refine_identity_images", "refine_steps", "refine_seed", "refine_sampler", "refine_scheduler", "refine_cfg",
@@ -636,7 +636,15 @@ export function normalizeProject(p) {
     st.quality = st.quality === "draft" ? "draft" : "final";
     st.final_mode = ["full", "refine", "luna"].includes(st.final_mode) ? st.final_mode : "full";
     st.piflow_steps = st.final_mode === "full" && [2, 4].includes(Math.trunc(num(st.piflow_steps, 0))) ? Math.trunc(num(st.piflow_steps, 0)) : 0;
-    st.piflow_lora = String(st.piflow_lora || "").trim().slice(0, 200);
+    st.piflow_lora2 = String(st.piflow_lora2 || "").trim().slice(0, 200);
+    st.piflow_lora4 = String(st.piflow_lora4 || "").trim().slice(0, 200);
+    // one-off: the former single field became the binding of the step count it was picked for
+    const legacyLora = String(st.piflow_lora || "").trim().slice(0, 200);
+    if (legacyLora) {
+      const lkey = Math.trunc(num(st.piflow_steps, 0)) === 4 ? "piflow_lora4" : "piflow_lora2";
+      if (!st[lkey]) st[lkey] = legacyLora;
+    }
+    delete st.piflow_lora;
     st.lowhigh_low_steps = Math.max(0, Math.min(199, Math.trunc(num(st.lowhigh_low_steps, 0))));
     st.lowhigh_scale = Math.round(Math.max(0.25, Math.min(1, num(st.lowhigh_scale, 0.60))) * 1000) / 1000;
     st.lowhigh_denoise = Math.round(Math.max(0.10, Math.min(1, num(st.lowhigh_denoise, 0.65))) * 1000) / 1000;

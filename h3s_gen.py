@@ -2575,6 +2575,13 @@ def _run_project_serialized(model, clip, vae, project, audio_vae=None, audio=Non
             pass
 
 
+def piflow_adapter_name(settings, steps):
+    """The DWD adapter file of a step count: the project's own binding, else the built-in name."""
+    n = 4 if int(steps) == 4 else 2
+    return (str((settings or {}).get(f"piflow_lora{n}") or "").strip()
+            or f"pi_h3_{n}step_dwd_adapter_int8_convrot.safetensors")
+
+
 def run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=None, preview_factory=None, sampler=None, model_pass2=None, sampler_pass2=None, global_seed=-1, stream_output=False):
     """Single-flight guard for shared generation state; never overlap two runs."""
     with _GENERATION_LOCK:
@@ -2623,16 +2630,16 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         if proj.get("regions"):
             raise ValueError("pi-H3 DWD: режим экспериментальный; перегенерация участков пока не поддерживается")
         import folder_paths
-        # The DWD adapter may live in any registered loras folder (extra_model_paths included), so the
-        # project names the file; the built-in names stay the default.
-        filename = (str(proj["settings"].get("piflow_lora") or "").strip()
-                    or f"pi_h3_{pi_n}step_dwd_adapter_int8_convrot.safetensors")
+        # The DWD adapter is bound to the step count (2 steps ↔ max_raw_t 0.930, 4 ↔ 0.960) and may live
+        # in any registered loras folder, so the project names the file per step count; built-in names stay
+        # the default.
+        filename = piflow_adapter_name(proj["settings"], pi_n)
         adapter_file = folder_paths.get_full_path("loras", filename)
         if not adapter_file and os.path.isabs(filename) and os.path.isfile(filename):
             adapter_file = filename
         if not adapter_file or not os.path.isfile(adapter_file):
             raise FileNotFoundError(
-                f"pi-H3 DWD: не найден адаптер «{filename}» — выберите файл в «Настройки → Генерация → pi-H3 · адаптер DWD»")
+                f"pi-H3 DWD: не найден адаптер «{filename}» для {pi_n} шагов — выберите файл в «Настройки → Генерация → pi-H3 · адаптер DWD»")
         stat = os.stat(adapter_file)
         proj["settings"]["_piflow_env"] = [filename, stat.st_size, stat.st_mtime_ns]
         for i, seg in enumerate(proj["segments"]):

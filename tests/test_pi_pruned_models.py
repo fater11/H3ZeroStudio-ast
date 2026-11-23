@@ -39,3 +39,27 @@ def test_installed_h3_hybrid_weights_have_48_pruned_blocks():
         path = os.path.join(base, name)
         if os.path.isfile(path):
             assert gen.piflow_has_pruned_layout(path), name
+
+
+def test_dwd_adapter_is_bound_per_step_count():
+    """2 steps and 4 steps have their own adapter binding; the built-in names stay the default."""
+    from h3s import h3s_core as core
+    s = {}
+    assert gen.piflow_adapter_name(s, 2) == "pi_h3_2step_dwd_adapter_int8_convrot.safetensors"
+    assert gen.piflow_adapter_name(s, 4) == "pi_h3_4step_dwd_adapter_int8_convrot.safetensors"
+    s = {"piflow_lora2": "loras/two.safetensors", "piflow_lora4": "loras/four.safetensors"}
+    assert gen.piflow_adapter_name(s, 2) == "loras/two.safetensors"
+    assert gen.piflow_adapter_name(s, 4) == "loras/four.safetensors"
+    # the settings keep both bindings apart
+    p = core.normalize_project({"id": "pi", "settings": {"final_mode": "full", "piflow_steps": 4,
+                                                          "piflow_lora2": "a.safetensors", "piflow_lora4": "b.safetensors"},
+                                "segments": [{"id": "s1", "frames": 39}]})
+    assert p["settings"]["piflow_lora2"] == "a.safetensors"
+    assert p["settings"]["piflow_lora4"] == "b.safetensors"
+    # the former single field becomes the binding of the step count it was picked for
+    legacy = core.normalize_project({"id": "pi2", "settings": {"final_mode": "full", "piflow_steps": 4,
+                                                               "piflow_lora": "old.safetensors"},
+                                     "segments": [{"id": "s1", "frames": 39}]})
+    assert legacy["settings"]["piflow_lora4"] == "old.safetensors"
+    assert legacy["settings"]["piflow_lora2"] == ""
+    assert "piflow_lora" not in legacy["settings"]

@@ -4,7 +4,7 @@ import { allThemes, themeSetting, applyTheme, loadPluginThemes, themeWarnings, D
 import { uiBlurEnabled, applyUiBlur, DEFAULT_UI_BLUR } from "./h3s_ui_blur.js";
 import { DEFAULT_UI_SCALE } from "./h3s_ui_scale.js";
 // Generation-only snapshots: checkpoints, LoRA stacks, characters and project content are never overwritten.
-const GENERATION_PRESET_FIELDS = ("piflow_steps piflow_lora aspect res_mode ratio image_ratio megapixels width height " +
+const GENERATION_PRESET_FIELDS = ("piflow_steps piflow_lora2 piflow_lora4 aspect res_mode ratio image_ratio megapixels width height " +
   "steps cfg denoise sampler scheduler sigmas shift_video shift_audio final_mode " +
   "draft_scale draft_steps draft_cfg draft_sampler draft_scheduler draft_sigmas " +
   "refine_steps refine_cfg refine_sampler refine_scheduler refine_sigmas refine_seed refine_sigma " +
@@ -800,13 +800,25 @@ export function installSettings(Editor, { C, h, ICON }) {
           this.field(T("Шаги pi-H3"), h("div", { class: "h3l-pills" },
             pill(g.piflow_steps !== 4, "2", T("2 шага · max_raw_t 0.930"), () => this.setPiSteps(2)),
             pill(g.piflow_steps === 4, "4", T("4 шага · max_raw_t 0.960"), () => this.setPiSteps(4)))),
-          this.field(T("Адаптер DWD (LoRA)"), (() => {
+          this.field(T("Адаптер DWD (LoRA)"), h("div", { class: "h3l-note" },
+            T("Адаптер привязан к числу шагов: у 2 шагов своя привязка, у 4 — своя. Файл берётся из папок loras.")))) : null,
+        uiPi ? h("div", { class: "h3l-grid2" },
+          this.field(T("Адаптер DWD (LoRA) · 2 шага"), (() => {
             const loras = (this._mp?.files?.lora || []).slice().sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-            const sel = h("select", { class: "h3l-sel", title: T("Файл адаптера pi-H3 DWD: список из всех папок loras") },
-              h("option", { value: "", selected: !g.piflow_lora }, T("авто · встроенное имя для {0} шагов", g.piflow_steps === 4 ? 4 : 2)),
-              ...loras.map((f) => h("option", { value: f, selected: f === g.piflow_lora }, f)),
-              g.piflow_lora && !loras.includes(g.piflow_lora) ? h("option", { value: g.piflow_lora, selected: true }, g.piflow_lora) : null);
-            sel.onchange = () => set("piflow_lora", sel.value);
+            const sel = h("select", { class: "h3l-sel", title: T("Файл адаптера для расписания в 2 шага") },
+              h("option", { value: "", selected: !g.piflow_lora2 }, T("авто · pi_h3_2step_dwd_adapter_int8_convrot.safetensors")),
+              ...loras.map((f) => h("option", { value: f, selected: f === g.piflow_lora2 }, f)),
+              g.piflow_lora2 && !loras.includes(g.piflow_lora2) ? h("option", { value: g.piflow_lora2, selected: true }, g.piflow_lora2) : null);
+            sel.onchange = () => set("piflow_lora2", sel.value);
+            return sel;
+          })()),
+          this.field(T("Адаптер DWD (LoRA) · 4 шага"), (() => {
+            const loras = (this._mp?.files?.lora || []).slice().sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+            const sel = h("select", { class: "h3l-sel", title: T("Файл адаптера для расписания в 4 шага") },
+              h("option", { value: "", selected: !g.piflow_lora4 }, T("авто · pi_h3_4step_dwd_adapter_int8_convrot.safetensors")),
+              ...loras.map((f) => h("option", { value: f, selected: f === g.piflow_lora4 }, f)),
+              g.piflow_lora4 && !loras.includes(g.piflow_lora4) ? h("option", { value: g.piflow_lora4, selected: true }, g.piflow_lora4) : null);
+            sel.onchange = () => set("piflow_lora4", sel.value);
             return sel;
           })())) : null,
         !uiPi ? h("details", { class: "h3l-gen-manage" }, h("summary", null, T("Быстрые сценарии и эксперименты")),
