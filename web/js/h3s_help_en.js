@@ -268,6 +268,7 @@ export const HELP_EN = [
 <tr><td>${K("Home")} / ${K("End")}</td><td>to start / to end</td></tr>
 <tr><td>${K("[")} / ${K("]")}</td><td>previous / next segment</td></tr>
 <tr><td>${K("+")} ${K("−")}, ${K("Ctrl")}+wheel</td><td>timeline zoom</td></tr>
+<tr><td>${K("Alt+N")}</td><td>next unfinished segment (new shell)</td></tr>
 <tr><td>${K("Ctrl+Z")} / ${K("Ctrl+Shift+Z")}, ${K("Ctrl+Y")}</td><td>undo / redo</td></tr>
 <tr><td>${K("Ctrl+Enter")}</td><td>generate</td></tr>
 <tr><td>${K("Ctrl+V")}</td><td>paste a picture into assets</td></tr>
