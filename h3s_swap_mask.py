@@ -535,11 +535,18 @@ def shape_mask(mask, cfg=None):
     m = (np.asarray(mask) > .5).astype(np.uint8)
     if cfg.get("fill_holes", True):
         h, w = m.shape[:2]
-        inv = (1 - m).astype(np.uint8)
-        ff = np.zeros((h + 2, w + 2), np.uint8)
-        cv2.floodFill(inv, ff, (0, 0), 2)
-        # the background the flood did not reach is enclosed by the silhouette -> a hole
-        m = np.where(inv == 1, 1, m).astype(np.uint8)
+        # A hole is background *enclosed* by the silhouette. Flooding from the corner (0, 0) was
+        # wrong: when the person covers that corner the flood runs inside the person, every real
+        # background pixel stays "unreached" and the mask grows to the whole frame (64 px -> 1024/1024).
+        # Connected background components that touch the frame border are outside, the rest are holes.
+        count, labels, stats, _ = cv2.connectedComponentsWithStats((1 - m).astype(np.uint8), connectivity=4)
+        holes = np.zeros_like(m)
+        for i in range(1, count):
+            x, y, cw, ch, _area = stats[i]
+            if x > 0 and y > 0 and x + cw < w and y + ch < h:
+                holes[labels == i] = 1
+        if holes.any():
+            m = np.maximum(m, holes).astype(np.uint8)
     expand = float(cfg.get("expand", 0) or 0)
     if expand >= 1:
         k = int(round(expand)) * 2 + 1
@@ -595,6 +602,10 @@ def composite(path, src_in, generated, mask_config, project_dir, progress=None):
                 masks = _load_block(_block_path(folder, block))
                 loaded_block = block
             small = masks[index % BLOCK]
+            if index in cuts:
+                previous = None  # New camera shot is not a one-frame identity teleport.
+                # ...and the temporal union must not drag the old shot's silhouette into the new one.
+                hist = []
             if temporal:
                 # union with the neighbouring masks: fast motion keeps a part of the person a frame late
                 hist.append(np.asarray(small))
@@ -602,9 +613,8 @@ def composite(path, src_in, generated, mask_config, project_dir, progress=None):
                     hist.pop(0)
                 if len(hist) > 1:
                     small = np.maximum.reduce(hist)
-            if index in cuts:
-                previous = None  # New camera shot is not a one-frame identity teleport.
             if float(small.mean()) < .001:
+                hist = []  # lost track: a union would resurrect the person a frame later
                 generated[start + j] = torch.from_numpy(np.asarray(source[j]).copy())
                 continue
             if use_guard:

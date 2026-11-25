@@ -1566,8 +1566,11 @@ export function baseSigs(project, kind = null) {
     const i = it.index, seg = project.segments[i];
     const src = seg.source, srcA = src ? project.assets.find((a) => a.id === src.asset) || {} : null;
     const sd = src ? [srcA.id, ...assetKf(srcA), src.in, src.denoise] : null;
+    // swap_expand / feather / fill_holes / temporal_expand change the pasted pixels (h3s_core.segment_keys
+    // carries them as "swapcfg"), so the UI status has to see them too.
     const swapSig = src?.swap ? [["swap", "guide_latent_v1", src.keep_audio !== false, src.swap_lora, src.swap_lora_strength,
-      ...(src.swap_mask ? [["person_mask_v1", src.swap_mask]] : [])]] : [];
+      ...(src.swap_mask ? [["person_mask_v1", src.swap_mask]] : []),
+      ["swapcfg", s.swap_expand, s.swap_feather, s.swap_fill_holes, s.swap_temporal_expand]]] : [];
     const km = kfMode(project, seg), kfa = kfAssets(project, seg);   // v6h «Кадры»: mode + frame files in the sig
     const vr = isFootage(seg) || km !== "t2v" ? [] : videoRefs(project, seg).slice(0, MAX_REF_VIDEOS).map((a) => [a.id, ...assetKf(a)]);
     const lhTotal = kind === "full" && s.final_mode === "luna" ? Math.max(2, Math.trunc(Number(passParams(project, i, kind).steps) || 2)) : null;
@@ -1578,7 +1581,7 @@ export function baseSigs(project, kind = null) {
     const sig = isFootage(seg) ? fnv(JSON.stringify(["footage", w, h, it.frames, sd])) : fnv(JSON.stringify([w, h, it.frames, it.overlap, composePrompt(project, i), s.negative || "",
       (km !== "t2v" ? [] : orderedRefs(project, seg)).map((a) => [a.id, ...assetKf(a)]), passParams(project, i, kind), !!s.lock_overlap,
       continuityPicture(project, i), s.ref_size, segmentTrack(project, it), audioRefs(project, seg).map((a) => [a.id, assetKf(a)[0] || ""]).slice(0, MAX_REF_AUDIOS),
-      it.link === "extend" && i > 0 ? prev : "", it.link === "extend" && i > 0 && it.overlap ? [audioLockOverlap(project), audioLockOverlap(project) ? 4 : 3, Math.round(Math.min(Number(s.audio_context_sec || 0), AUDIO_CONTEXT_MAX) * 100) / 100] : segmentTrack(project, it).length ? [false, 3] : 0].concat(["protected", "h3studio"].includes(s.continuation_method) && it.link === "extend" && i > 0 && it.overlap ? [["handover", s.continuation_method === "protected" ? "protected_v1" : "h3studio_lab_tone_bridge_v3"]] : [], it.link === "extend" && i > 0 && it.overlap && Number(s.video_ramp_frames) ? [["vramp", Number(s.video_ramp_frames)]] : [], sd ? [["src", sd]] : [], vr.length ? [["vrefs", vr]] : [], km === "t2v" && cardKey(project, seg).length ? [["cards", cardKey(project, seg)]] : [], km !== "t2v" ? [["kf", km, ...kfa.map((a) => (a ? [a.id, ...assetKf(a)] : null)), ...kfFitKey(project)]] : [], presetFingerprint(segmentPreset(project, i)) ? [["mp", presetFingerprint(segmentPreset(project, i))]] : [], lhSig, s.piflow_steps ? [["piflow", s.piflow_steps]] : [], s.self_anchor_voice === true && kind === "full" && km === "t2v" && it.link === "extend" && i > 0 ? [["self_voice", "first_voice_ref_v1"]] : [], ctlSig(project, it), swapSig)));
+      it.link === "extend" && i > 0 ? prev : "", it.link === "extend" && i > 0 && it.overlap ? [audioLockOverlap(project), audioLockOverlap(project) ? 4 : 3, Math.round(Math.min(Number(s.audio_context_sec || 0), AUDIO_CONTEXT_MAX) * 100) / 100] : segmentTrack(project, it).length ? [false, 3] : 0].concat(["protected", "h3studio"].includes(s.continuation_method) && it.link === "extend" && i > 0 && it.overlap ? [["handover", s.continuation_method === "protected" ? "protected_v1" : "h3studio_lab_tone_bridge_v3"]] : [], it.link === "extend" && i > 0 && it.overlap && Number(s.video_ramp_frames) ? [["vramp", Number(s.video_ramp_frames)]] : [], sd ? [["src", sd]] : [], vr.length ? [["vrefs", vr]] : [], km === "t2v" && cardKey(project, seg).length ? [["cards", cardKey(project, seg)]] : [], km !== "t2v" ? [["kf", km, ...kfa.map((a) => (a ? [a.id, ...assetKf(a)] : null)), ...kfFitKey(project)]] : [], presetFingerprint(segmentPreset(project, i)) ? [["mp", presetFingerprint(segmentPreset(project, i))]] : [], lhSig, s.piflow_steps ? [["piflow", s.piflow_steps, s.piflow_steps === 4 ? (s.piflow_lora4 || "") : (s.piflow_lora2 || "")]] : [], s.self_anchor_voice === true && kind === "full" && km === "t2v" && it.link === "extend" && i > 0 ? [["self_voice", "first_voice_ref_v1"]] : [], ctlSig(project, it), swapSig)));
     const fsig = seg.freeze ? (seg.freeze.sig || "F" + seg.freeze.key) : chainPin(seg, kind, sig);   // frozen: fixed, so what follows stays valid
     out.push(fsig); prev = fsig;
   }
@@ -1590,6 +1593,8 @@ function refineSigs(project, draft, full) {
   const s = project.settings, items = plan(project), rp = [s.refine_sigma, s.upscale_method, resolution(s)].concat(refineExtra(s));
   if (s.refine_schedule_mode === "basic") rp.push(["basic_scheduler", Number(s.refine_denoise ?? 0.30), "sample_custom_v1"]);
   if (s.refine_identity_images) rp.push(["refine_identity_picture_v1"]);
+  // mirror of h3s_core._refine_keys: a non-empty refine prompt is part of the refine result
+  if ((s.refine_prompt || "").trim()) rp.push(["refine_prompt_v1", s.refine_prompt.trim()]);
   if (Number(s.refine_seed ?? -1) >= 0) rp.push(["refine_seed_v1", Number(s.refine_seed)]);
   const out = []; let prev = "";
   items.forEach((it, j) => {
