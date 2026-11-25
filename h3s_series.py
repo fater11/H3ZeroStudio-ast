@@ -87,27 +87,49 @@ def plan_beats(idea, seconds, w=1344, h=768, budget=None, overlap_blocks=1, beat
             "over_budget": [b["index"] for b in beats_out if b["tokens"] > budget]}
 
 
-CONTRACT = """Ты пишешь промты для модели MiniMax H3: серия связанных отрезков одного ролика.
+CONTRACT = """Ты — писатель промтов для MiniMax H3. Пишешь серию отрезков ОДНОГО непрерывного кадра: каждый
+следующий отрезок продолжает предыдущий, и готовый ролик должен играть как один план без видимого стыка.
+Основа правил — «MiniMax H3 Long Take (Motion Context)» (forge_data/styles/minimax_h3_long_take.json).
+
 Верни СТРОГО JSON без пояснений:
 {"title": "...", "logline": "...", "segments": [{"prompt": "...", "note": "..."}, ...]}
 Ровно {count} элементов в segments, в том же порядке, что отрезки ниже.
 
-Правила промта каждого отрезка:
-1. Формат H3 Ref2VA, английские ключевые строки: subject_definitions / summary / retention_analysis /
-   detailed_description / overall_soundscape / non_diegetic_music. Все действия в detailed_description
-   начинаются со строки "[Shot 1]".
-2. Промт описывает ТОЛЬКО свой отрезок ({seconds} с, {new_frames} кадров). Не пересказывай предыдущие.
-3. Не повторяй одно и то же действие в двух отрезках: у каждого своя новая порция развития идеи.
-4. Связь: отрезок {link_hint}. Если это продолжение — начни с того, чем кончился предыдущий
-   (та же поза, тот же свет, тот же план), и заканчивай позой, из которой следующий отрезок продолжит.
-5. Один непрерывный план по умолчанию; склейка/смена плана — только если это нужно по идее, тогда укажи это явно.
-6. Речь: если идея про речь, дай её коротко и в кавычках, с языком в <d>[Русский] …</d>, и одного говорящего (S1).
-   Если речи нет — не упоминай речь вовсе.
-7. Звук: overall_soundscape — только звук сцены. Музыка — non_diegetic_music: N/A, кроме случая, когда
-   музыка прямо нужна по идее.
-8. Ничего не оставляй «на потом»: каждый отрезок самодостаточен и понятен без соседей.
-9. Стиль, персонажи, локация и свет описываются одинаково во всех отрезках (одна и та же внешность,
-   одна и та же одежда, та же локация), меняется только действие.
+Формат промта каждого отрезка — шесть секций H3 Ref2VA по порядку:
+subject_definitions:   <Subject 1> — кто в кадре и откуда берётся внешность.
+summary:               [reference generation] один абзац: что происходит за отрезок и чем он кончается.
+retention_analysis:    строка на каждый ярлык, у которого есть роль.
+detailed_description:  описание кадра; начинается со строки [Shot 1], дальше действие по времени.
+overall_soundscape:    только звук сцены.
+non_diegetic_music:    N/A, если музыки нет.
+ВЕСЬ текст промта — только по-английски, включая описания: идея может быть задана по-русски, переведи её сам.
+
+Правила цепочки (стык держится на последних кадрах предыдущего отрезка, поэтому такие):
+1. Промт описывает ТОЛЬКО свой отрезок ({seconds} с, {new_frames} кадров). Не пересказывай предыдущие.
+2. Отрезков {count}. Связь этого отрезка: {link_hint}.
+3. Стык попадает на скучное место — середина шага, подъёма, движения: там единственный возможный следующий
+   кадр — «продолжай». Никогда не стыкуй на двери, пороге, прибытии, присаживании и середине фразы.
+4. Целый переход живёт внутри одного отрезка: дойти, открыть, шагнуть — всё в одном отрезке.
+5. Место назначения показывай раньше, чем персонаж туда идёт; на дорогу давай реальное экранное время.
+6. Кадрирование зафиксировано на весь ролик; плавный проезд камеры (push-in, pull-out, tilt) через стык не переноси.
+7. 2–3 события на 10 секунд. Что-то обязано развиваться — свет, погода, что открывает луч фонаря: одинаковые
+   декорации читаются как копипаста. Не пиши POV от первого лица, если в кадре человек.
+8. Никогда не используй слово cut ни в каком виде, даже «no cut»: монтажных склеек в промте H3 нет.
+9. В detailed_description ровно одна строка [Shot 1]; время отсчитывается от начала отрезка с 00:00.000. В
+   продолжающем отрезке пиши метки раньше на 0.92 с (первые ~22 кадра берутся из предыдущего отрезка и при сборке
+   вырезаются): событие на T секунде пиши как T + 0.92.
+10. Последняя строка каждого отрезка, кроме последнего, говорит, что персонаж всё ещё делает, когда отрезок
+    кончается: из этого состояния следующий отрезок и продолжается.
+11. Продолжающий отрезок открывается блоком продолжения — первые ~3 секунды, ноль новых предметов и декораций,
+    только продолжение: кадр уже идёт, камера держит ту же позицию, высоту и дистанцию, персонаж движется тем же
+    темпом в том же пространстве, свет тот же, ничто новое не входит в кадр. Закончи блок отрицаниями того, что
+    случится позже в этом отрезке. Дай персонажу мелкое действие (вдох, перемена веса): застывший кадр замерзает.
+12. Стиль, персонажи, локация и свет описываются одинаково во всех отрезках; меняется только действие.
+13. Речь: короткие реплики, 7–9 слов, примерно одна на 2.5 секунды, формат
+    At 00:04.700: [speaking, Russian, <голос>] "Stairs. Let's go up.", а точные слова — на языке речи внутри
+    <d>[Русский] Что дальше?</d>. Один говорящий (S1). Нет речи — не упоминай речь вовсе.
+14. Звук: overall_soundscape — только звук сцены. Музыка — non_diegetic_music: N/A, кроме случая, когда музыка
+    прямо нужна по идее.
 """
 
 
@@ -146,6 +168,73 @@ def writer_messages(idea, plan, style="", refs=(), language="ru", extra="", only
         lines = [f"Это отрезок {only + 1} из {len(beats)}."] + lines
     return [{"role": "system", "content": head},
             {"role": "user", "content": "\n".join(lines)}]
+
+
+# Правила промта H3 (forge_data/prompts/portable-prompt.md): их обязан соблюдать и писатель, и шаблон.
+PROMPT_SECTIONS = ("subject_definitions:", "summary:", "retention_analysis:", "detailed_description:",
+                   "overall_soundscape:", "non_diegetic_music:")
+REQUIRED_SECTIONS = ("subject_definitions:", "summary:", "detailed_description:", "non_diegetic_music:")
+META_PHRASES = ("part 1 of", "part 2 of", "part 3 of", "this shot is part", "this part opens the film",
+                "this part ends the film", "the target video presents")
+
+
+def _section_body(text, header):
+    """Текст секции до следующей известной секции."""
+    lines = str(text or "").splitlines()
+    try:
+        start = next(i for i, line in enumerate(lines) if line.strip() == header)
+    except StopIteration:
+        return ""
+    body = []
+    for line in lines[start + 1:]:
+        if line.strip() in PROMPT_SECTIONS:
+            break
+        body.append(line)
+    return "\n".join(body).strip()
+
+
+CONTINUATION_MARKERS = ("already in progress", "opens already", "mid-stride", "mid-step", "mid-climb",
+                        "mid-action", "mid-motion", "in the middle of", "continues the previous",
+                        "continuing from", "the same pace", "same position, height and distance")
+
+
+def check_prompt_rules(prompt, continuation=False):
+    """Список нарушений правил H3 (пусто — промт годится).
+
+    Правила: язык, секции и их порядок, тип задачи, `[Shot 1]`, отсутствие слова cut; у продолжающего отрезка —
+    блок продолжения в начале описания.
+    """
+    text = str(prompt or "")
+    if not text.strip():
+        return ["промт пустой"]
+    bad = []
+    if _NON_EN.search(text):
+        bad.append("в промте текст не на английском (правило 1a: промт H3 пишется целиком по-английски)")
+    order = [line.strip() for line in text.splitlines() if line.strip() in PROMPT_SECTIONS]
+    for need in REQUIRED_SECTIONS:
+        if need not in order:
+            bad.append(f"нет секции {need.rstrip(':')}")
+    if order != [s for s in PROMPT_SECTIONS if s in order]:
+        bad.append("секции идут не по порядку: " + " → ".join(s.rstrip(":") for s in PROMPT_SECTIONS))
+    if "summary:" in order:
+        body = _section_body(text, "summary:")
+        if not body.startswith("["):
+            bad.append("summary должен начинаться с типа задачи в квадратных скобках, например "
+                       "[reference generation]")
+    if "[Shot 1]" not in text:
+        bad.append("описание кадра должно начинаться со строки [Shot 1]")
+    if "non_diegetic_music:" in order and not _section_body(text, "non_diegetic_music:"):
+        bad.append("пустая строка non_diegetic_music — для ролика без музыки напиши N/A")
+    low = text.lower()
+    for phrase in META_PHRASES:
+        if phrase in low:
+            bad.append(f"служебная фраза в описании кадра: «{phrase}»")
+    if re.search(r"\bcut\b|\bcuts\b|\bcutting\b", low):
+        bad.append("в промте есть слово cut, а монтажных склеек в промте H3 нет (правило 8)")
+    if continuation and not any(marker in low for marker in CONTINUATION_MARKERS):
+        bad.append("продолжающий отрезок без блока продолжения: первые ~3 секунды — только продолжение "
+                   "уже идущего кадра, без новых предметов и смены света (правило 11)")
+    return bad
 
 
 def _objects(text):
@@ -197,7 +286,7 @@ def _json_block(text):
     raise ValueError("Писатель вернул не JSON — нужен объект с segments")
 
 
-def parse_answer(text, plan, expect=None, index=None):
+def parse_answer(text, plan, expect=None, index=None, continuation=False):
     """Ответ писателя → проверенные промты (число отрезков должно совпасть с ожидаемым).
 
     `expect` — сколько элементов ждём (по умолчанию все отрезки), `index` — чей это промт, когда пишут по одному.
@@ -209,12 +298,20 @@ def parse_answer(text, plan, expect=None, index=None):
     want = int(expect if expect is not None else len(plan["beats"]))
     if len(segs) != want:
         raise ValueError(f"Писатель вернул {len(segs)} отрезков вместо {want}")
-    out = []
+    prompts = []
     for i, item in enumerate(segs):
         prompt = item.get("prompt") if isinstance(item, dict) else str(item)
         if not prompt or not str(prompt).strip():
             raise ValueError(f"Отрезок {i + 1} пришёл без промта")
-        out.append({"index": int(index) if index is not None else i, "prompt": str(prompt).strip(),
+        prompts.append(str(prompt).strip())
+    out = []
+    for i, (item, prompt) in enumerate(zip(segs, prompts)):
+        idx = int(index) if index is not None else i
+        cont = bool(plan["beats"][idx].get("overlap")) if 0 <= idx < len(plan["beats"]) else bool(continuation)
+        broken = check_prompt_rules(prompt, continuation=cont)
+        if broken:
+            raise ValueError(f"Писатель нарушил правила промта H3 (отрезок {i + 1}): " + "; ".join(broken[:4]))
+        out.append({"index": int(index) if index is not None else i, "prompt": prompt,
                     "note": str((item.get("note") if isinstance(item, dict) else "") or "").strip()})
     return {"title": str(data.get("title") or "") if isinstance(data, dict) else "",
             "logline": str(data.get("logline") or "") if isinstance(data, dict) else "",
@@ -228,7 +325,8 @@ _META_HINTS = ("концепц", "промпт:", "промт:", "prompt:", "let
                "此处", "因此", "首先", "总结", "构思", "根据", "用俄语")
 
 _STRICT_NOTE = ("Важно: ответь ТОЛЬКО JSON-объектом по контракту выше — без пояснений, списков, "
-                "размышлений и посторонних языков. Промт каждого отрезка — одна строка на русском.")
+                "размышлений и посторонних языков. Каждый промт пиши ЦЕЛИКОМ по-английски (переведи идею сам), "
+                "одной строкой в поле prompt.")
 
 
 def clean_prompt_line(text):
@@ -301,6 +399,22 @@ SLICE_HINT = ("Each segment describes only its own beat of the idea, in its own 
               "never be repeated in two segments.")
 
 
+_NON_EN = re.compile(r"[а-яё]", re.I)
+
+
+def english_or_placeholder(text):
+    """Промт H3 пишется по-английски. Идея на русском без модели не переводится — ставим место под перевод.
+
+    Возвращает (строка для промта, нужен ли перевод): перевод нужен, когда в тексте есть кириллица.
+    """
+    line = " ".join(str(text or "").split()).strip()
+    if not line:
+        return "", False
+    if _NON_EN.search(line):
+        return "", True
+    return line, False
+
+
 def fallback_prompts(plan, style="", sound="", voice="", refs=()):
     """Шаблонный писатель: серия собирается без LLM (промты в формате H3, по отрезку на шаг).
 
@@ -313,17 +427,30 @@ def fallback_prompts(plan, style="", sound="", voice="", refs=()):
     beats = plan["beats"]
     sentences = _idea_sentences(plan["idea"])
     parts = _idea_beats(plan["idea"], len(beats))
+    style_line, style_needs_en = english_or_placeholder(style or "")
+    sound_line, sound_needs_en = english_or_placeholder(sound or "")
+    voice_line, voice_needs_en = english_or_placeholder(voice or "")
     out = []
     for b in beats:
         i = b["index"]
-        beat_text = parts[i]                          # своя часть идеи у каждого отрезка
+        beat_text, needs_en = english_or_placeholder(parts[i])     # своя часть идеи у каждого отрезка
         if beat_text and not beat_text.endswith((".", "!", "?", "…")):
             beat_text += "."
-        opening = ("[Shot 1] The shot continues the previous part without a cut: it opens on the exact same "
-                   "framing, light and pose the part before it ended with." if b["overlap"]
-                   else "[Shot 1] The shot opens the film: the camera is already settled on the scene.")
-        closing = ("It ends on a pose, framing and light the next part can continue from."
-                   if i < len(beats) - 1 else "It ends the film on a held final pose while the motion settles.")
+        if needs_en:
+            # перевода у шаблона нет: в промте — английское место под перевод, русский текст уходит в пометку
+            beat_text = ("Replace this line with the English description of this part of the action, keeping "
+                         "the same subject, wardrobe and light as every other part of the film.")
+        # блок продолжения: первые ~3 секунды — только продолжение уже идущего кадра, без новых предметов
+        opening = ("[Shot 1] The video opens already in progress, mid-motion. The camera holds exactly the "
+                   "position, height and distance it already has, and the person keeps moving at exactly the same "
+                   "pace through the space they are already in, the light on them unchanged. For the first three "
+                   "seconds nothing changes: no new object enters the frame, the light does not shift, and the "
+                   "person does not stop or turn around." if b["overlap"]
+                   else "[Shot 1] The shot opens the film: the camera is already settled on the scene, the light "
+                        "is steady and the person is mid-motion from the first frame.")
+        closing = ("At the end of the shot the person is still carrying the action on, mid-motion, with nothing "
+                   "else in progress." if i < len(beats) - 1
+                   else "The shot ends on a held final pose while the motion settles.")
         lines = [
             "subject_definitions:",
             "<Subject 1> is the person of the scene: the same face, hair, build and wardrobe as in every other "
@@ -337,20 +464,29 @@ def fallback_prompts(plan, style="", sound="", voice="", refs=()):
                       "reference exactly, with no change of hairstyle, clothing or accessories."]
         lines += [
             "detailed_description:",
-            style or "Live-action, cinematic, real-time speed. Natural light, fine film grain, stable framing, "
-                     "a hand-held texture that stays calm.",
+            style_line or "Live-action, cinematic, real-time speed. Natural light, fine film grain, stable "
+                          "framing, a hand-held texture that stays calm.",
             f"{opening} {beat_text} {closing}",
             "The person's hands, gaze and breathing carry the action: unhurried, deliberate, physically "
             "believable, with no extra people entering the frame.",
             "overall_soundscape:",
-            sound or "The quiet ambience of the room and the small sounds the action itself makes.",
+            sound_line or "The quiet ambience of the room and the small sounds the action itself makes.",
             "non_diegetic_music:",
             "N/A",
         ]
-        if voice:
-            lines.append(f"spoken: {voice}")
-        out.append({"index": i, "prompt": "\n".join(lines),
-                    "note": "шаблон — напишите свой текст или подключите модель в «Ассистенте»"})
+        # имена из деталей, которые не удалось перенести на английский, остаются здесь, а не в промте
+        notes = []
+        if needs_en:
+            notes.append("переведите идею на английский: " + parts[i])
+        if style_needs_en:
+            notes.append("стиль задан по-русски: " + str(style))
+        if sound_needs_en:
+            notes.append("звук задан по-русски: " + str(sound))
+        if voice_needs_en:
+            notes.append("речь задана по-русски: " + str(voice))
+        draft = ("шаблон — " + "; ".join(notes)) if notes else \
+            "шаблон — напишите свой текст или подключите модель в «Ассистенте»"
+        out.append({"index": i, "prompt": "\n".join(lines), "note": draft})
     return {"title": " ".join(sentences)[:60], "logline": " ".join(sentences), "segments": out}
 
 
@@ -381,18 +517,13 @@ def write_series(plan, fetch=None, style="", refs=(), language="ru", extra="", s
             attempts = attempt + 1
             answer = fetch(messages if attempt == 0 else strict)
             try:
-                written = parse_answer(answer, plan, expect=expect, index=only)
+                seg_plan = plan["beats"][int(only)] if only is not None else None
+                cont = bool(seg_plan and seg_plan.get("overlap")) if seg_plan else False
+                written = parse_answer(answer, plan, expect=expect, index=only, continuation=cont)
                 out = {"written": written, "used": "llm", "messages": messages, "attempts": attempts}
                 return {**out, **({"only": only} if only is not None else {})}
             except Exception as exc:
                 error, last_exc = str(exc), exc
-                # модель ответила строкой вместо JSON — для одного отрезка это готовый промт
-                line = clean_prompt_line(answer)
-                if only is not None and line:
-                    written = {"title": "", "logline": "",
-                               "segments": [{"index": int(only), "prompt": line, "note": "писатель ответил строкой"}]}
-                    return {"written": written, "used": "llm-line", "messages": messages, "attempts": attempts,
-                            "only": only}
         raise last_exc if last_exc is not None else RuntimeError("Писатель не дал промтов")
     except Exception as exc:
         if not allow_fallback:
