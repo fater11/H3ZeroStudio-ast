@@ -53,3 +53,14 @@ def test_prepare_rejects_an_empty_or_bad_click(tmp_path):
         sm.prepare(str(video), [], 8, 64, 64, str(tmp_path))
     with pytest.raises(ValueError):
         sm.prepare(str(video), [(1.4, 0.2)], 8, 64, 64, str(tmp_path))
+
+
+def test_seeds_of_takes_back_its_own_pairs():
+    """prepare/composite передают уже готовые пары ((x, y), box) — повторный разбор не должен падать."""
+    ready = [((0.3, 0.6), None), ((0.7, 0.4), [0.6, 0.2, 0.9, 0.8])]
+    assert sm.seeds_of({"seeds": ready}) == [((0.3, 0.6), None), ((0.7, 0.4), [0.6, 0.2, 0.9, 0.8])]
+    # и обычные формы по-прежнему работают
+    assert sm.seeds_of({"seeds": [[0.3, 0.6], [0.7, 0.4]]}) == [((0.3, 0.6), None), ((0.7, 0.4), None)]
+    assert sm.seeds_of({"seeds": [{"point": [0.3, 0.6], "box": None}]}) == [((0.3, 0.6), None)]
+    assert sm.seeds_of({"point": [0.3, 0.6]}) == [((0.3, 0.6), None)]
+    assert sm.seeds_of({}) == []

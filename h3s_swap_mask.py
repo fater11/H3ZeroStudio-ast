@@ -342,24 +342,41 @@ def _person_detector(checkpoint):
     return YOLO(checkpoint)
 
 
+def _pair(value):
+    """(x, y) из пары чисел, иначе None — так «точка» не путается с «парой (точка, бокс)»."""
+    if isinstance(value, (list, tuple)) and len(value) == 2 and all(isinstance(v, (int, float)) for v in value):
+        return tuple(float(v) for v in value)
+    return None
+
+
 def seeds_of(mask_config):
-    """[(point, box)] — one person per click, several for a multi-person swap. Legacy single point works."""
+    """[(point, box)] — one person per click, several for a multi-person swap. Legacy single point works.
+
+    Принимает и уже готовые пары `((x, y), box)`: `prepare` сам получает такие от `composite`, и повторный
+    разбор не должен превращать точку в кортеж кортежей (иначе float(tuple) и падение).
+    """
     cfg = mask_config or {}
     raw = cfg.get("seeds")
     if isinstance(raw, list) and raw:
         out = []
         for e in raw:
             if isinstance(e, dict):
-                p = e.get("point")
-                if isinstance(p, (list, tuple)) and len(p) == 2:
-                    out.append((tuple(float(v) for v in p), e.get("box")))
+                p = _pair(e.get("point"))
+                if p:
+                    out.append((p, e.get("box")))
             elif isinstance(e, (list, tuple)) and len(e) == 2:
-                out.append((tuple(float(v) for v in e), None))
+                first = _pair(e[0])
+                if first is not None:
+                    out.append((first, e[1]))          # пара (точка, бокс) как есть
+                else:
+                    plain = _pair(e)
+                    if plain is not None:
+                        out.append((plain, None))
         if out:
             return out
-    p = cfg.get("point")
-    if isinstance(p, (list, tuple)) and len(p) == 2:
-        return [(tuple(float(v) for v in p), cfg.get("box"))]
+    p = _pair(cfg.get("point"))
+    if p:
+        return [(p, cfg.get("box"))]
     return []
 
 
