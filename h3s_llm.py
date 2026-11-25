@@ -494,24 +494,31 @@ def stream_chat(messages, temperature=0.7, top_p=0.9, max_tokens=32768,
                 raise
 
 
-def collect_chat(messages, **kw):
+def collect_chat(messages, reasoning_fallback=True, **kw):
     """Полный ответ модели одним куском: удобно для служебных задач (писатель серии, разбор плана).
 
-    Токены собираются, reasoning и служебные замечания отбрасываются, ошибка поднимается исключением.
+    Токены собираются; служебные замечания отбрасываются, ошибка поднимается исключением.
+    `reasoning_fallback` — если модель положила весь ответ в «размышления» (так делают некоторые дешёвые
+    и thinking-модели за прокси: content пустой, текст в reasoning), вернуть его, а не пустую строку.
     """
-    out = []
+    out, thought = [], []
     gen = stream_chat(messages, **kw)
     try:
         for kind, text in gen:
             if kind == "token":
                 out.append(text or "")
+            elif kind == "reasoning":
+                thought.append(text or "")
             elif kind == "error":
                 raise ValueError(str(text))
     finally:
         close = getattr(gen, "close", None)
         if close:
             close()
-    return "".join(out)
+    text = "".join(out)
+    if text.strip() or not reasoning_fallback:
+        return text
+    return "".join(thought)
 
 
 def sse_payload(kind, text):

@@ -495,7 +495,8 @@ def register():
                     # thinking off and a modest cap: a single segment prompt is short, and a long answer
                     # is what makes the connection die before the text arrives
                     return h3s_llm.collect_chat(messages, temperature=float(b.get("temperature") or 0.6),
-                                                max_tokens=min(6000, int(b.get("max_tokens") or 4000)),
+                                                # thinking-модели тратят токены и на размышления, поэтому потолок выше
+                                                max_tokens=min(8000, int(b.get("max_tokens") or 6000)),
                                                 api_base_url=str(b.get("api_base") or ""),
                                                 api_key=str(b.get("api_key") or ""),
                                                 api_model=str(b.get("api_model") or ""),
