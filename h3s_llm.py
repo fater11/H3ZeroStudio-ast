@@ -494,5 +494,25 @@ def stream_chat(messages, temperature=0.7, top_p=0.9, max_tokens=32768,
                 raise
 
 
+def collect_chat(messages, **kw):
+    """Полный ответ модели одним куском: удобно для служебных задач (писатель серии, разбор плана).
+
+    Токены собираются, reasoning и служебные замечания отбрасываются, ошибка поднимается исключением.
+    """
+    out = []
+    gen = stream_chat(messages, **kw)
+    try:
+        for kind, text in gen:
+            if kind == "token":
+                out.append(text or "")
+            elif kind == "error":
+                raise ValueError(str(text))
+    finally:
+        close = getattr(gen, "close", None)
+        if close:
+            close()
+    return "".join(out)
+
+
 def sse_payload(kind, text):
     return ("data: " + json.dumps({"kind": kind, "text": text}, ensure_ascii=False) + "\n\n").encode("utf-8")

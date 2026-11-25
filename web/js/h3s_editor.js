@@ -34,6 +34,7 @@ import { installMonitor } from "./h3s_monitor.js";
 import { installSwapAccess } from "./h3s_swap_access.js";
 import { installTvStudio } from "./h3s_tv_studio.js";
 import { installSplice } from "./h3s_splice.js";
+import { installSeries } from "./h3s_series.js";
 import { T, plural, tServer } from "./h3s_i18n.js";
 
 // LAB: restrained, desaturated clip palette (same 8 slots, so projects keep their colour index)
@@ -62,6 +63,7 @@ export const ICON = {
   projects: svg('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'),
   keys: svg('<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>'),
   chars: svg('<circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5"/><path d="M16 4.5a3 3 0 0 1 0 6M18 14c1.6.7 2.6 2.4 3 5"/>'),
+  series: svg('<path d="M4 6h6v12H4zM14 6h6v12h-6z"/><path d="M12 4v16"/>'),
   splice: svg('<circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><path d="M8 7.5 20 18M8 16.5 20 6"/><path d="M12 12h9"/>'),
   swap: svg('<circle cx="6" cy="7" r="2.5"/><circle cx="18" cy="17" r="2.5"/><path d="M2 15c.3-2.5 1.7-4 4-4s3.7 1.5 4 4M14 22c.3-2.5 1.7-4 4-4s3.7 1.5 4 4M13 4h7l-2-2M20 4l-2 2M11 20H4l2-2M4 20l2 2"/>'),
   info: svg('<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/>'),
@@ -556,10 +558,10 @@ export class H3Editor {
   renderTools() {
     const t = this.$.tools; t.innerHTML = "";
     if (this.tool === "audio") this.tool = "assets";
-    const tool = (id, icon, label) => h("div", { class: "h3l-tool" + (this.tool === id ? " on" : ""), title: id === "swap" ? T("Эксперимент: замена персонажа на видео") : label, html: icon + `<span>${label}</span>`, onclick: () => { if (id === "swap") return this.openSwapWorkspace(); if (id === "tv") return this.openTvStudio(); if (id === "splice") return this.openSplice(); if (this.tool === "swap") this.closeSwapWorkspace(false); this.tvClose?.(); this.spClose?.(); if (id === "assist") this.openAssist(); else { if (id === "settings" && this.tool !== "settings") this._preSetTool = this.tool; this.tool = id; this.renderTools(); this.renderLeft(); } } });
+    const tool = (id, icon, label) => h("div", { class: "h3l-tool" + (this.tool === id ? " on" : ""), title: id === "swap" ? T("Эксперимент: замена персонажа на видео") : label, html: icon + `<span>${label}</span>`, onclick: () => { if (id === "swap") return this.openSwapWorkspace(); if (id === "tv") return this.openTvStudio(); if (id === "splice") return this.openSplice(); if (id === "series") return this.openSeries(); if (this.tool === "swap") this.closeSwapWorkspace(false); this.tvClose?.(); this.spClose?.(); this.srClose?.(); if (id === "assist") this.openAssist(); else { if (id === "settings" && this.tool !== "settings") this._preSetTool = this.tool; this.tool = id; this.renderTools(); this.renderLeft(); } } });
     const social = (href, icon, label) => h("a", { class: "h3l-social-link", href, target: "_blank", rel: "noopener noreferrer", title: label, "aria-label": label, html: icon });
     t.append(tool("assets", ICON.assets, T("Ассеты")), tool("chars", ICON.chars, T("Персоны")), tool("swap", ICON.swap, T("Замена")), tool("gallery", ICON.gallery, T("Галерея")), tool("projects", ICON.projects, T("Проекты")), tool("models", ICON.models, T("Модели")), tool("settings", ICON.settings, T("Настройки")), tool("keys", ICON.keys, T("Клавиши")),
-      tool("assist", ICON.spark, T("Ассистент")), tool("tv", ICON.spark, T("AI TV")), tool("splice", ICON.splice, T("Сборка")),
+      tool("assist", ICON.spark, T("Ассистент")), tool("tv", ICON.spark, T("AI TV")), tool("splice", ICON.splice, T("Сборка")), tool("series", ICON.series, T("Серия")),
       h("div", { class: "sp" }),
       tool("help", ICON.help, T("Справка")), tool("about", ICON.info, T("Инфо")));
   }
@@ -2452,5 +2454,6 @@ installChars(H3Editor, { C, h, ICON });
 installSwapAccess(H3Editor, { C, h, ICON });
 installTvStudio(H3Editor, { C, h, ICON });
 installSplice(H3Editor, { C, h, ICON });
+installSeries(H3Editor, { C, h, ICON });
 installAssist(H3Editor, { C, h, ICON });
 installMonitor(H3Editor, { C, h });

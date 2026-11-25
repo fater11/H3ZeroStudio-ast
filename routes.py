@@ -415,6 +415,67 @@ def register():
             return tv.playlist_export(files, out)
         return await _json_call(work)
 
+    # ------------------------------------------------------- серия связанных отрезков из одной идеи
+    @routes.post("/h3lab/series/plan")
+    async def series_plan(request):
+        from . import h3s_series as series
+        b = await request.json()
+
+        def work():
+            return series.plan_beats(b.get("idea") or "", b.get("seconds") or 30,
+                                     w=int(b.get("width") or 1344), h=int(b.get("height") or 768),
+                                     budget=int(b["budget"]) if b.get("budget") else None,
+                                     beats=int(b["beats"]) if b.get("beats") else None,
+                                     overlap_blocks=int(b.get("overlap_blocks")) if b.get("overlap_blocks") is not None else 1,
+                                     ref_images=int(b.get("ref_images") or 0))
+        return await _json_call(work)
+
+    @routes.post("/h3lab/series/write")
+    async def series_write(request):
+        import asyncio
+        from . import h3s_series as series, h3s_llm
+        b = await request.json()
+
+        def work():
+            plan = b.get("plan") or series.plan_beats(b.get("idea") or "", b.get("seconds") or 30,
+                                                      w=int(b.get("width") or 1344), h=int(b.get("height") or 768),
+                                                      budget=int(b["budget"]) if b.get("budget") else None,
+                                                      beats=int(b["beats"]) if b.get("beats") else None,
+                                                      overlap_blocks=int(b.get("overlap_blocks"))
+                                                      if b.get("overlap_blocks") is not None else 1)
+            fetch = None
+            if b.get("api_model") and b.get("use_llm", True):
+                def fetch(messages):
+                    return h3s_llm.collect_chat(messages, temperature=float(b.get("temperature") or 0.6),
+                                                max_tokens=int(b.get("max_tokens") or 12000),
+                                                api_base_url=str(b.get("api_base") or ""),
+                                                api_key=str(b.get("api_key") or ""),
+                                                api_model=str(b.get("api_model") or ""),
+                                                thinking=False)
+            return series.write_series(plan, fetch=fetch, style=str(b.get("style") or ""),
+                                       refs=list(b.get("refs") or []), language=str(b.get("language") or "ru"),
+                                       extra=str(b.get("extra") or ""), sound=str(b.get("sound") or ""),
+                                       allow_fallback=b.get("allow_fallback", True))
+        return await _json_call(work)
+
+    @routes.post("/h3lab/series/project")
+    async def series_project(request):
+        from . import h3s_series as series
+        b = await request.json()
+
+        def work():
+            plan = b.get("plan") or {}
+            if not plan.get("beats"):
+                raise ValueError("Серия: нет плана отрезков")
+            project = series.build_project(plan, b.get("written") or {}, settings=b.get("settings") or {},
+                                           name=b.get("name") or None)
+            saved = None
+            if b.get("save"):
+                from . import h3s_library as lib
+                saved = lib.project_save(project, {"name": project["name"], "series": True})
+            return {"project": project, "saved": saved, "new_frames": series.total_new_frames(project)}
+        return await _json_call(work)
+
     # ------------------------------------------------------------------- ref splice (движения из видео)
     def _splice_source(b):
         """Абсолютный путь исходного видео: либо путь, либо ассет проекта (файл в папке input)."""
