@@ -1022,10 +1022,12 @@ def decode_video(vae, v):
 
 
 def piflow_has_pruned_layout(path):
-    """Verify the 48 actual pruned AdaLN layers without loading a ~20 GB model.
+    """Report whether the 48 AdaLN layers look like a pruned H3, without loading a ~20 GB model.
 
-    pi-H3 DWD expects [96768, 8]; unpruned H3 uses [96768, 2688].
-    A filename is not evidence of either architecture (10Eros/B25-49 omit 'pruned').
+    pi-H3 DWD expects [96768, 8]; unpruned H3 uses [96768, 2688]. The result is advisory only
+    (a warning, never a rejection). A filename is not evidence of either architecture
+    (10Eros/B25-49 omit 'pruned'), and some packs store the layers under the full
+    'model.diffusion_model.' prefix, so both key spellings are accepted.
     """
     if not path or not os.path.isfile(path):
         return False
@@ -1035,19 +1037,25 @@ def piflow_has_pruned_layout(path):
             if not 0 < size <= 16 * 1024 * 1024:
                 return False
             header = json.loads(f.read(size))
-        return all(header.get(f"blocks.{i}.adaln_proj.linear.weight", {}).get("shape")
+        keys = tuple(header)
+        prefix = "model.diffusion_model." if any(k.startswith("model.diffusion_model.blocks.") for k in keys) else ""
+        return all(header.get(f"{prefix}blocks.{i}.adaln_proj.linear.weight", {}).get("shape")
                    == [96768, 8] for i in range(48))
     except (OSError, ValueError, TypeError, UnicodeDecodeError):
         return False
 
 
-def piflow_patch_and_sigmas(model, steps):
-    """Use the installed piFlow custom nodes, including DWD; 2 and 4 steps have separate adapters."""
+def piflow_patch_and_sigmas(model, steps, settings=None):
+    """Use the installed piFlow custom nodes, including DWD; 2 and 4 steps have separate adapters.
+
+    The adapter file comes from `settings` (piflow_lora2 / piflow_lora4) exactly like the
+    preflight check and the cache key, so a selected custom adapter is the one that is loaded.
+    """
     import nodes
     n = int(steps)
     if n not in (2, 4):
         raise ValueError("pi-H3: поддерживаются только 2 или 4 шага")
-    adapter = f"pi_h3_{n}step_dwd_adapter_int8_convrot.safetensors"
+    adapter = piflow_adapter_name(settings or {}, n)
     loader = nodes.NODE_CLASS_MAPPINGS.get("Load LakonLab Adapter")
     scheduler = nodes.NODE_CLASS_MAPPINGS.get("pi-Flow Scheduler")
     decoder = nodes.NODE_CLASS_MAPPINGS.get("DWD Decode")
@@ -1622,7 +1630,7 @@ def sample_segment(model, clip, vae, project, index, items, prev, ref_images, au
     CTL_RUN["info"][index] = cinfo
     pi_sigmas = None
     if kind == "full" and s.get("piflow_steps") in (2, 4):
-        m, pi_sigmas = piflow_patch_and_sigmas(m, s["piflow_steps"])
+        m, pi_sigmas = piflow_patch_and_sigmas(m, s["piflow_steps"], s)
     noise_mask = None
     if w_a is not None and float(w_a.max()) > 0:
         audio = (lock_a * w_a + audio * (1 - w_a)).to(audio.dtype)
@@ -2679,10 +2687,10 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
             path = (folder_paths.get_full_path("diffusion_models", name)
                     if pr.get("base") == "unet" and name else None)
             if not piflow_has_pruned_layout(path):
-                raise ValueError(f"pi-H3 DWD: отрезок {i + 1} требует реальную pruned-структуру "
-                                 f"(48 AdaLN блоков 96768×8) в модели «{name or 'не выбрана'}»; "
-                                 "unpruned/неизвестный формат не поддерживается")
-        log(f"pi-H3 DWD: {pi_n}-step experimental, pruned presets verified, adapter {filename}")
+                warn = (f"pi-H3 DWD: отрезок {i + 1}: модель «{name or 'не выбрана'}» не похожа на pruned-структуру "
+                        f"(48 AdaLN блоков 96768×8) — генерация продолжится, но качество и совместимость DWD не гарантированы")
+                log("  " + warn)
+        log(f"pi-H3 DWD: {pi_n}-step experimental, layout check advisory only, adapter {filename}")
     # model & LoRA presets: wired inputs win per part; the preset (project / clip override) gives the rest
     from . import h3s_models
     wired_sig = model_signature(model, clip, vae, audio_vae)
