@@ -416,16 +416,48 @@ def register():
         return await _json_call(work)
 
     # ------------------------------------------------------------------- ref splice (движения из видео)
+    def _splice_source(b):
+        """Абсолютный путь исходного видео: либо путь, либо ассет проекта (файл в папке input)."""
+        if b.get("video"):
+            return str(b["video"])
+        a = b.get("asset") or {}
+        from . import h3s_gen
+        return h3s_gen.asset_path({"file": a.get("file") or a.get("filename"), "subfolder": a.get("subfolder") or "",
+                                   "type": a.get("type") or "input", "name": a.get("name") or ""})
+
+    def _splice_chars(b):
+        """Картинки персонажей из выбора в интерфейсе — как абсолютные пути (ассеты проекта)."""
+        from . import h3s_gen
+        out = []
+        for a in b.get("char_assets") or []:
+            try:
+                out.append(h3s_gen.asset_path({"file": a.get("file"), "subfolder": a.get("subfolder") or "",
+                                               "type": a.get("type") or "input", "name": a.get("name") or ""}))
+            except Exception:
+                continue
+        return out or [str(p) for p in (b.get("characters") or [])]
+
+    def _splice_size(b, info):
+        """Размер референс-видео: короткая сторона из интерфейса, пропорции — как в исходнике."""
+        side = float(b.get("side") or 0)
+        if side <= 0:
+            return None, None
+        w, h = int(info.get("width") or 0), int(info.get("height") or 0)
+        if w <= 0 or h <= 0:
+            return None, None
+        scale = side / max(1, min(w, h))
+        return max(2, int(w * scale) // 2 * 2), max(2, int(h * scale) // 2 * 2)
+
     @routes.post("/h3lab/splice/draft")
     async def splice_draft(request):
         from . import h3s_splice as splice
         b = await request.json()
 
         def work():
-            text = splice.draft_script(b.get("video") or "", duration=b.get("duration"),
+            text = splice.draft_script(_splice_source(b), duration=b.get("duration"),
                                        cuts=b.get("cuts") or None, min_clip=float(b.get("min_clip") or 1.5),
                                        max_clips=int(b.get("max_clips") or 8))
-            return {"script": text, "video": b.get("video") or ""}
+            return {"script": text, "video": _splice_source(b)}
         return await _json_call(work)
 
     @routes.post("/h3lab/splice/plan")
@@ -434,12 +466,13 @@ def register():
         b = await request.json()
 
         def work():
-            info = splice.media.video_info(b.get("video") or "")
+            src = _splice_source(b)
+            info = splice.media.video_info(src)
             script = splice.parse_script(b.get("script") or "")
             timeline = splice.build_timeline(script, src_dur=info.get("duration"))
-            plan = splice.plan_shots(script, timeline, b.get("name") or "splice", b.get("video") or "",
-                                     characters=b.get("characters") or [], w=int(b.get("width") or 1344),
-                                     h=int(b.get("height") or 768),
+            w, h = _splice_size(b, info)
+            plan = splice.plan_shots(script, timeline, b.get("name") or "splice", src, characters=_splice_chars(b),
+                                     w=w or int(b.get("width") or 1344), h=h or int(b.get("height") or 768),
                                      budget=int(b["budget"]) if b.get("budget") else None)
             return {"plan": plan, "script": script,
                     "shots": [{"kind": s["kind"], "frames": s["length"], "overlap": s["overlap"],
@@ -453,18 +486,45 @@ def register():
 
         def work():
             script = splice.parse_script(b.get("script") or "")
-            info = splice.media.video_info(b.get("video") or "")
+            src = _splice_source(b)
+            info = splice.media.video_info(src)
             timeline = splice.build_timeline(script, src_dur=info.get("duration"))
             import os
             from . import h3s_tv as tv
             folder = os.path.join(tv.root(), "splice")
             os.makedirs(folder, exist_ok=True)
-            out = splice.write_splice(b.get("script") or "", b.get("video") or "", folder,
-                                      name=b.get("name") or "splice", w=b.get("width"), h=b.get("height"),
-                                      characters=b.get("characters") or [])
+            w, h = _splice_size(b, info)
+            out = splice.write_splice(b.get("script") or "", src, folder,
+                                      name=b.get("name") or "splice", w=w, h=h, characters=_splice_chars(b))
             out["script"] = splice.script_to_text(out["script"])
             out["plan"]["reference"] = out["reference"]
             return out
+        return await _json_call(work)
+
+    @routes.post("/h3lab/splice/to_order")
+    async def splice_to_order(request):
+        from . import h3s_splice as splice
+        b = await request.json()
+
+        def work():
+            name = b.get("name") or "splice"
+            src = _splice_source(b)
+            info = splice.media.video_info(src)
+            script = splice.parse_script(b.get("script") or "")
+            timeline = splice.build_timeline(script, src_dur=info.get("duration"))
+            import os
+            from . import h3s_tv as tv
+            folder = os.path.join(tv.root(), "splice")
+            os.makedirs(folder, exist_ok=True)
+            ref = os.path.join(folder, f"{tv.slug(name, 'splice')}_ref.mp4")
+            w, h = _splice_size(b, info)
+            if b.get("script") and not os.path.isfile(ref):
+                splice.render(timeline["ops"], src, ref, w=w, h=h, audio=timeline["audio"])
+            chars = _splice_chars(b)
+            plan = splice.plan_shots(script, timeline, name, ref, characters=chars,
+                                     w=w or 1344, h=h or 768)
+            order = splice.to_order(plan, ref, name, b.get("brand") or "", characters=chars)
+            return {"order": order, "plan": plan, "reference": ref}
         return await _json_call(work)
 
     # ---------------------------------------------------------------- multi-person cast + keyframes

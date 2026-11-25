@@ -212,6 +212,28 @@ def order_create(name, brand_id, minutes, pace="medium", cast=None, prompt_prefi
     return order
 
 
+def order_from_scenes(name, brand_id, scenes, assets=None, kind="splice", source=""):
+    """An order whose scenes are given as they are (a splice plan of one reference video), not planned by minutes.
+
+    `assets` travels with the order: every scene's `refs` point into it, so `_project_for_scene` gives the
+    scene its motion-reference video (or its pictures) without touching the rest of the pipeline.
+    """
+    b = brand_get(brand_id)
+    if not b:
+        raise ValueError("AI TV: бренд не найден: " + str(brand_id))
+    if not scenes:
+        raise ValueError("AI TV: в заказе нет сцен")
+    frames = int(sum(int(s.get("frames") or 0) for s in scenes))
+    order = {"id": slug(name, "splice") + "-" + str(int(time.time()))[-5:], "name": str(name or "")[:80],
+             "brand": b["id"], "kind": kind, "pace": "", "minutes": round(frames / FPS / 60.0, 3),
+             "scenes": [dict(s, index=i) for i, s in enumerate(scenes)],
+             "assets": list(assets or []), "source": source,
+             "actual_seconds": round(frames / FPS, 3), "frames_total": frames, "frames_requested": frames,
+             "created": time.time(), "status": "draft", "playlist": [], "dupes": []}
+    _write(os.path.join(_dir("orders"), order["id"] + ".json"), order)
+    return order
+
+
 def orders():
     out = [_load(os.path.join(_dir("orders"), f), None) for f in sorted(os.listdir(_dir("orders")))
            if f.endswith(".json")]
@@ -378,7 +400,8 @@ def _project_for_scene(order, brand, scene):
     pid = scene_project_id(order["id"], scene["index"])
     r = normalize_render(brand.get("render"))
     segments = [{"id": "s1", "name": f'{scene["kind"]} {scene["index"] + 1}', "frames": int(scene["frames"]),
-                 "prompt": scene.get("prompt") or "", "refs": [], "link": "cut", "gap": 0}]
+                 "prompt": scene.get("prompt") or "", "refs": list(scene.get("refs") or []), "link": "cut", "gap": 0,
+                 **({"overlap": int(scene["overlap"])} if scene.get("overlap") else {})}]
     budget = int(order.get("frames_requested") or 0)
     before = sum(int(s["frames"]) for s in order.get("scenes", []) if s["index"] < scene["index"])
     end = max(0, min(int(scene["frames"]), budget - before)) if budget else 0
@@ -392,7 +415,7 @@ def _project_for_scene(order, brand, scene):
     preset = {"id": "tv", "name": brand["name"], "base": "unet", "model": r["model"], "dtype": "default",
               "clip": r["clip"], "vae": r["vae"], "audio_vae": r["audio_vae"], "loras": []}
     return {"version": 1, "id": pid, "name": f'{order["id"]} · {scene["index"] + 1}', "settings": settings,
-            "model_presets": {"tv": preset}, "assets": [], "segments": segments,
+            "model_presets": {"tv": preset}, "assets": list(order.get("assets") or []), "segments": segments,
             "end_mode": "fixed" if end and end < int(scene["frames"]) else "auto", "end": int(end),
             "audio": {"clips": [], "video_volume": 0.0 if r["no_audio"] else 1.0, "input_ref": None},
             "run": {"operation": "full", "export_stream": True, "no_audio": bool(r["no_audio"]),

@@ -277,7 +277,7 @@ def plan_shots(script, timeline, name, video_file, characters=(), w=1344, h=768,
     """План сборки: по шоту промпт, кадры, референс-видео и персонажи (с разбивкой по бюджету токенов)."""
     from . import h3s_budget
     budget = int(budget if budget is not None else h3s_budget.budget_tokens())
-    segments, prev_text = [], ""
+    segments, prev_text, cursor = [], "", 0
     for i, shot in enumerate(timeline["shots"], start=1):
         prompt = shot_prompt(script, shot, pictures=len(characters), has_audio=has_audio, prev_text=prev_text, fps=fps)
         frames = shot["length"]
@@ -286,7 +286,9 @@ def plan_shots(script, timeline, name, video_file, characters=(), w=1344, h=768,
                                         ref_video_frames=frames if ref_video else 0, ref_video_w=w,
                                         ref_video_h=h)
         seg = {"name": f"{name} {i}", "prompt": prompt, "frames": frames, "overlap": shot["overlap"],
-               "kind": shot["kind"], "video": ref_video, "characters": list(characters), "tokens": tok}
+               "kind": shot["kind"], "video": ref_video, "characters": list(characters), "tokens": tok,
+               "index": i - 1, "src_start": cursor}   # src_start: where this shot sits in the spliced video
+        cursor += shot["length"] - shot["overlap"]
         if tok > budget:
             parts = h3s_budget.parts_for(frames, tok, budget)
             if len(parts) > 1:
@@ -444,6 +446,46 @@ def write_splice(script_text, src, out_dir, name="splice", w=None, h=None, budge
                       budget=budget, has_audio=bool(rendered["audio"]))
     plan["reference"] = rendered
     return {"script": script, "timeline": timeline, "plan": plan, "reference": rendered}
+
+
+def to_order(plan, spliced, name, brand, characters=()):
+    """План сборки → заказ AI TV: каждому шоту вырезается свой кусок склеенного референса.
+
+    Референс-клип шота лежит в папке input ComfyUI и приходит в проект как обычный видео-ассет, поэтому
+    дальше работает весь остальной конвейер пака (кэш, тейки, апскейл, оценка).
+    """
+    import shutil
+    import folder_paths
+    from . import h3s_tv as tv
+    inp = os.path.abspath(folder_paths.get_input_directory())
+    base = tv.slug(name, "splice")
+    assets, scenes = [], []
+    for seg in plan["segments"]:
+        refs = []
+        frames = int(seg["frames"])
+        if seg["kind"] == "video" and spliced and os.path.isfile(str(spliced)):
+            fname = f"{base}_{seg['index'] + 1}_ref.mp4"
+            # export_video takes frame numbers, not seconds
+            media.export_video(spliced, os.path.join(inp, fname), start=int(seg["src_start"]),
+                               end=int(seg["src_start"]) + frames)
+            aid = f"motion{seg['index'] + 1}"
+            assets.append({"id": aid, "category": "video", "file": fname, "subfolder": "", "type": "input",
+                           "name": f"{name} {seg['index'] + 1}"})
+            refs.append(aid)
+        for k, path in enumerate(seg.get("characters") or list(characters)):
+            path = str(path)
+            if not os.path.isfile(path):
+                continue
+            fname = f"{base}_char{seg['index'] + 1}_{k + 1}" + (os.path.splitext(path)[1] or ".png")
+            shutil.copyfile(path, os.path.join(inp, fname))
+            aid = f"pic{seg['index'] + 1}_{k + 1}"
+            assets.append({"id": aid, "category": "image", "file": fname, "subfolder": "", "type": "input",
+                           "name": os.path.basename(path)})
+            refs.append(aid)
+        scenes.append({"kind": seg["kind"], "frames": frames, "overlap": int(seg.get("overlap") or 0),
+                       "seconds": round(frames / FPS, 3), "prompt": seg.get("prompt") or "", "text": "",
+                       "refs": refs, "tokens": int(seg.get("tokens") or 0)})
+    return tv.order_from_scenes(name, brand, scenes, assets=assets, kind="splice", source=str(spliced or ""))
 
 
 def script_to_text(script):

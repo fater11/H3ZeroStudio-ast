@@ -33,6 +33,7 @@ import { installAssist } from "./h3s_assist.js";
 import { installMonitor } from "./h3s_monitor.js";
 import { installSwapAccess } from "./h3s_swap_access.js";
 import { installTvStudio } from "./h3s_tv_studio.js";
+import { installSplice } from "./h3s_splice.js";
 import { T, plural, tServer } from "./h3s_i18n.js";
 
 // LAB: restrained, desaturated clip palette (same 8 slots, so projects keep their colour index)
@@ -61,6 +62,7 @@ export const ICON = {
   projects: svg('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'),
   keys: svg('<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>'),
   chars: svg('<circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5"/><path d="M16 4.5a3 3 0 0 1 0 6M18 14c1.6.7 2.6 2.4 3 5"/>'),
+  splice: svg('<circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><path d="M8 7.5 20 18M8 16.5 20 6"/><path d="M12 12h9"/>'),
   swap: svg('<circle cx="6" cy="7" r="2.5"/><circle cx="18" cy="17" r="2.5"/><path d="M2 15c.3-2.5 1.7-4 4-4s3.7 1.5 4 4M14 22c.3-2.5 1.7-4 4-4s3.7 1.5 4 4M13 4h7l-2-2M20 4l-2 2M11 20H4l2-2M4 20l2 2"/>'),
   info: svg('<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/>'),
   github: svg('<path d="M12 2a10 10 0 0 0-3.2 19.5c.5.1.7-.2.7-.5v-1.7c-2.8.6-3.4-1.2-3.4-1.2-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.3-1.1.6-1.3-2.2-.3-4.6-1.1-4.6-5 0-1.1.4-2 1-2.7-.1-.2-.4-1.3.1-2.7 0 0 .8-.3 2.7 1a9.5 9.5 0 0 1 5 0c1.9-1.3 2.7-1 2.7-1 .5 1.4.2 2.5.1 2.7.6.7 1 1.6 1 2.7 0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.9V21c0 .3.2.6.7.5A10 10 0 0 0 12 2z" fill="currentColor" stroke="none"/>'),
@@ -554,10 +556,10 @@ export class H3Editor {
   renderTools() {
     const t = this.$.tools; t.innerHTML = "";
     if (this.tool === "audio") this.tool = "assets";
-    const tool = (id, icon, label) => h("div", { class: "h3l-tool" + (this.tool === id ? " on" : ""), title: id === "swap" ? T("Эксперимент: замена персонажа на видео") : label, html: icon + `<span>${label}</span>`, onclick: () => { if (id === "swap") return this.openSwapWorkspace(); if (id === "tv") return this.openTvStudio(); if (this.tool === "swap") this.closeSwapWorkspace(false); if (id === "assist") this.openAssist(); else { if (id === "settings" && this.tool !== "settings") this._preSetTool = this.tool; this.tool = id; this.renderTools(); this.renderLeft(); } } });
+    const tool = (id, icon, label) => h("div", { class: "h3l-tool" + (this.tool === id ? " on" : ""), title: id === "swap" ? T("Эксперимент: замена персонажа на видео") : label, html: icon + `<span>${label}</span>`, onclick: () => { if (id === "swap") return this.openSwapWorkspace(); if (id === "tv") return this.openTvStudio(); if (id === "splice") return this.openSplice(); if (this.tool === "swap") this.closeSwapWorkspace(false); this.tvClose?.(); this.spClose?.(); if (id === "assist") this.openAssist(); else { if (id === "settings" && this.tool !== "settings") this._preSetTool = this.tool; this.tool = id; this.renderTools(); this.renderLeft(); } } });
     const social = (href, icon, label) => h("a", { class: "h3l-social-link", href, target: "_blank", rel: "noopener noreferrer", title: label, "aria-label": label, html: icon });
     t.append(tool("assets", ICON.assets, T("Ассеты")), tool("chars", ICON.chars, T("Персоны")), tool("swap", ICON.swap, T("Замена")), tool("gallery", ICON.gallery, T("Галерея")), tool("projects", ICON.projects, T("Проекты")), tool("models", ICON.models, T("Модели")), tool("settings", ICON.settings, T("Настройки")), tool("keys", ICON.keys, T("Клавиши")),
-      tool("assist", ICON.spark, T("Ассистент")), tool("tv", ICON.spark, T("AI TV")),
+      tool("assist", ICON.spark, T("Ассистент")), tool("tv", ICON.spark, T("AI TV")), tool("splice", ICON.splice, T("Сборка")),
       h("div", { class: "sp" }),
       tool("help", ICON.help, T("Справка")), tool("about", ICON.info, T("Инфо")));
   }
@@ -2449,5 +2451,6 @@ installTimer(H3Editor, { C, h });
 installChars(H3Editor, { C, h, ICON });
 installSwapAccess(H3Editor, { C, h, ICON });
 installTvStudio(H3Editor, { C, h, ICON });
+installSplice(H3Editor, { C, h, ICON });
 installAssist(H3Editor, { C, h, ICON });
 installMonitor(H3Editor, { C, h });
