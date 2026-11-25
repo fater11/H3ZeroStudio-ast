@@ -2127,23 +2127,6 @@ def estimate(project):
         if it["frames"] < TRAINED_MIN_FRAMES or it["frames"] > TRAINED_MAX_FRAMES:
             warnings.append(f"{name}: {it['frames']} кадров ({it['frames'] / FPS:.1f} с) — вне обучающего диапазона H3 "
                             f"{TRAINED_MIN_FRAMES}–{TRAINED_MAX_FRAMES} кадров")
-        try:   # DiT token budget: an over-budget shot slows the run down instead of failing loudly
-            from . import h3s_budget as budget
-            w_, h_ = work_resolution(project["settings"])
-            snaps = project.get("cards") or {}
-            tok = budget.segment_tokens(
-                seg, w_, h_, ref_images=len(ordered_refs(project, seg)),
-                ref_video_frames=sum(int((a.get("frames") or a.get("kf_frames") or 0))
-                                     for a in video_refs(project, seg)),
-                cards=[snaps.get(c) for c in (seg.get("cards") or []) if isinstance(snaps, dict)])
-            cap = budget.budget_tokens()
-            if tok > cap:
-                parts = budget.parts_for(it["frames"], tok, cap)
-                warnings.append(f"{name}: ≈{tok // 1000} тыс. токенов при бюджете {cap // 1000} тыс. — "
-                                f"видеопамять может не хватить (рекомендуется {len(parts)} части; "
-                                f"меньше референсов или разрешение ниже)")
-        except Exception:
-            pass   # the estimate must never break the pre-run summary
         km = kf_mode(project, seg)
         if km != "t2v":
             if ordered_refs(project, seg) or seg.get("cards") or video_refs(project, seg):
