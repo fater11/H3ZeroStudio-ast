@@ -53,3 +53,7 @@ tests/harness/node_modules
 
 # manual backups: replaced by git history (they stay in the first commit)
 *.bak
+
+# local agent/tooling artifacts (not part of the node)
+AGENTS.md
+graphify-out/
