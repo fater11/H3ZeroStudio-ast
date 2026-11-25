@@ -42,7 +42,7 @@ globalThis.Node = window.Node;
 globalThis.DocumentFragment = window.DocumentFragment;
 globalThis.localStorage = window.localStorage;
 globalThis.sessionStorage = window.sessionStorage;
-globalThis.navigator = window.navigator;
+Object.defineProperty(globalThis, "navigator", { configurable: true, value: window.navigator });
 globalThis.getComputedStyle = window.getComputedStyle.bind(window);
 globalThis.requestAnimationFrame = (cb) => setTimeout(() => cb(Date.now()), 0);
 globalThis.cancelAnimationFrame = (id) => clearTimeout(id);
@@ -433,8 +433,25 @@ async function runPass(label, { fail } = {}) {
 }
 
 const results = [];
-results.push(await runPass("ok-routes"));
-results.push(await runPass("error-routes", { fail: true }));
+if (process.argv.includes("--settings-shortcut")) {
+  const ed = new H3Editor(host);
+  ed.open();
+  const shortcut = ed.root.querySelector(".h3l-setlink");
+  assert(shortcut, "right-side generation shortcut is missing");
+  shortcut.click();
+  assert(ed.$.setWin?.dataset.tab === "gen", "generation shortcut failed: " + ed.$.left.textContent);
+  ed.$.setWin.querySelector(".h3l-setwin-hd button").click();
+  assert(!ed.root.querySelector(".h3l-setmodal"), "settings backdrop still blocks the workspace");
+  const currentZoom = ed.zoom;
+  ed.$.zoomR.value = "80";
+  ed.$.zoomR.dispatchEvent(new window.Event("input", { bubbles: true }));
+  await new Promise((resolve) => window.requestAnimationFrame(resolve));
+  assert(ed.zoom !== currentZoom, "timeline zoom did not respond after closing settings");
+  ed.close();
+} else {
+  results.push(await runPass("ok-routes"));
+  results.push(await runPass("error-routes", { fail: true }));
+}
 
 const out = {
   skipped: false,

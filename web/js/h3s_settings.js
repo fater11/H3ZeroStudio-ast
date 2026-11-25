@@ -1059,7 +1059,7 @@ export function installSettings(Editor, { C, h, ICON }) {
         ["up", T("Апскейл"), [upS]], ["ext", T("Продление и звук"), [ext]],
         ["prev", T("Превью и кэш"), [pv, cache]], ["appearance", T("Внешний вид"), []],
       ];
-      const titleOf = (d) => (d.querySelector(":scope > summary")?.firstChild?.textContent || "").trim();
+      const titleOf = (d) => (d?.querySelector(":scope > summary")?.firstChild?.textContent || "").trim();
       if (this._setOpen) {
         // Several tabs share section names (e.g. acceleration or memory).
         // Prefer the current tab so editing one section never throws the user elsewhere.

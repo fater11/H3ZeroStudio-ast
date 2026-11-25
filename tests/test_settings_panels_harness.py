@@ -17,22 +17,20 @@ NODE_PATHS = [
 
 
 def _jsdom_ready():
-    for p in NODE_PATHS:
+    for p in [*filter(None, os.environ.get("NODE_PATH", "").split(os.pathsep)), *NODE_PATHS]:
         if os.path.isdir(os.path.join(p, "jsdom")):
             return p
     return None
 
 
-need_node = pytest.mark.skipif(NODE is None, reason="node.js not found")
-need_jsdom = pytest.mark.skipif(_jsdom_ready() is None, reason="jsdom not installed (npm i jsdom)")
-
-
-@need_node
-@need_jsdom
-def test_settings_panels_jsdom_harness():
+@pytest.mark.parametrize("args", [(), ("--settings-shortcut",)], ids=["all-panels", "settings-shortcut"])
+def test_settings_panels_jsdom_harness(args: tuple[str, ...]):
+    jsdom_path = _jsdom_ready()
+    if NODE is None or jsdom_path is None:
+        pytest.skip("node.js and jsdom are required")
     env = os.environ.copy()
-    env["NODE_PATH"] = _jsdom_ready()
-    r = subprocess.run([NODE, HARNESS], capture_output=True, text=True, timeout=120, env=env, cwd=ROOT)
+    env["NODE_PATH"] = jsdom_path
+    r = subprocess.run([NODE, HARNESS, *args], capture_output=True, text=True, timeout=120, env=env, cwd=ROOT)
     # last JSON object in stdout
     lines = [ln for ln in (r.stdout or "").splitlines() if ln.strip().startswith("{")]
     assert lines, f"no JSON from harness\nstdout={r.stdout!r}\nstderr={r.stderr!r}"
