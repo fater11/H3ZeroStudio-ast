@@ -415,6 +415,52 @@ def register():
             return tv.playlist_export(files, out)
         return await _json_call(work)
 
+    # ------------------------------------------------- дрейф яркости/цвета по всему ролику
+    @routes.post("/h3lab/drift/analyze")
+    async def drift_analyze(request):
+        from . import h3s_drift as drift
+        b = await request.json()
+
+        def work():
+            path = b.get("video") or ""
+            if not path or not os.path.isfile(path):
+                raise ValueError("Дрейф: нет файла видео")
+            res = drift.analyze_video(path, side=int(b.get("side") or drift.SAMPLE_SIDE),
+                                      cuts=b.get("cuts") or None, mode=str(b.get("mode") or "scenes"),
+                                      strength=float(b.get("strength") or 1.0),
+                                      trend_window=int(b["trend_window"]) if b.get("trend_window") else None)
+            res.pop("p995", None)
+            res["gains"] = [round(g, 4) for g in res["gains"]]
+            return res
+        return await _json_call(work)
+
+    @routes.post("/h3lab/drift/fix")
+    async def drift_fix(request):
+        from . import h3s_drift as drift
+        b = await request.json()
+
+        def work():
+            path = b.get("video") or ""
+            if not path or not os.path.isfile(path):
+                raise ValueError("Дрейф: нет файла видео")
+            out = b.get("out") or ""
+            if not out:
+                folder = os.path.dirname(path)
+                out = os.path.join(folder, os.path.splitext(os.path.basename(path))[0] + "_drift.mp4")
+            res = drift.correct_video(path, out, mode=str(b.get("mode") or "scenes"),
+                                      strength=float(b.get("strength") or 1.0),
+                                      cuts=b.get("cuts") or None, audio=b.get("audio", True) is not False,
+                                      side=int(b.get("side") or drift.SAMPLE_SIDE))
+            res.pop("p995", None)
+            return res
+        return await _json_call(work)
+
+    @routes.get("/h3lab/drift/state")
+    async def drift_state(request):
+        from . import h3s_drift as drift
+        q = request.rel_url.query
+        return await _json_call(drift.state_of, q.get("video", ""))
+
     # ------------------------------------------------------- серия связанных отрезков из одной идеи
     @routes.post("/h3lab/series/plan")
     async def series_plan(request):
