@@ -415,6 +415,74 @@ def register():
             return tv.playlist_export(files, out)
         return await _json_call(work)
 
+    # ---------------------------------------------------------------- multi-person cast + keyframes
+    @routes.post("/h3lab/cast/analyse")
+    async def cast_analyse(request):
+        from . import h3s_cast as cast
+        b = await request.json()
+
+        def work():
+            import numpy as np
+            from . import h3s_media as media
+            path = b.get("video") or ""
+            info = media.video_info(path)
+            frames = media.sample_video_frames(
+                path, [k / cast.SAMPLE_FPS for k in range(int(info["frames"] / 24 * cast.SAMPLE_FPS))],
+                480, int(480 * info["height"] / max(1, info["width"])))
+            boxes = cast.detect_boxes(np.asarray(frames))
+            if not boxes:
+                raise ValueError("Каст: не найден детектор людей (модель YOLO person) или в кадре никого нет")
+            report = cast.analyse(boxes, keyframes=int(b.get("keyframes") or 4),
+                                  cuts=b.get("cuts") or ())
+            report["video"] = path
+            return report
+        return await _json_call(work)
+
+    @routes.post("/h3lab/cast/package")
+    async def cast_package(request):
+        from . import h3s_cast as cast
+        b = await request.json()
+
+        def work():
+            import numpy as np
+            from . import h3s_media as media
+            video = b.get("video") or ""
+            keyframes = b.get("keyframes") or []
+            characters = b.get("characters") or []
+            info = media.video_info(video)
+            frames = media.sample_video_frames(
+                video, [kf.get("at_seconds", 0.0) for kf in keyframes], 960,
+                int(960 * info["height"] / max(1, info["width"])))
+            request_json = cast.build_request(b.get("package") or "cast", keyframes, characters,
+                                             b.get("describe") or {})
+            import os
+            from . import h3s_tv as tv
+            folder = os.path.join(tv.root(), "keyframes")
+            os.makedirs(folder, exist_ok=True)
+            out = os.path.join(folder, (b.get("package") or "cast") + "_keyframes.zip")
+            res = cast.export_package(out, {i: np.asarray(f) for i, f in enumerate(frames)}, keyframes,
+                                      characters, request_json)
+            res["request"] = request_json
+            res["answer_file"] = cast.answer_file_for(out)
+            return res
+        return await _json_call(work)
+
+    @routes.post("/h3lab/cast/import")
+    async def cast_import(request):
+        from . import h3s_cast as cast
+        b = await request.json()
+
+        def work():
+            res = cast.import_answer(b.get("zip") or "", b.get("answer") or {})
+            import json as _json, os
+            path = cast.answer_file_for(b.get("zip") or "")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                _json.dump(res, f, ensure_ascii=False, indent=2)
+            res["saved"] = path
+            return res
+        return await _json_call(work)
+
     @routes.get("/h3lab/status")
     async def status(request):
         try:
