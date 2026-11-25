@@ -208,7 +208,8 @@ def _outside_prompt():
             setattr(srv, name, None)
 
 
-def mask_preview(path, point, width, height, box=None, frame=0):
+def mask_preview(path, point, width, height, box=None, frame=0):   # noqa: D401
+    """Preview of the selected person(s): `point` may be one click or a list of clicks."""
     """Verify the selected person on the first frame or a later camera shot."""
     import cv2
     import torch
@@ -223,14 +224,21 @@ def mask_preview(path, point, width, height, box=None, frame=0):
     rgb = cv2.resize(src, (tw, th), interpolation=cv2.INTER_AREA).astype(np.float32) / 255
     _outside_prompt()
     # Native nodes ordinarily execute in inference_mode inside the Comfy queue.
+    seeds = seeds_of({"seeds": point} if point and isinstance(point[0], (list, tuple, dict)) else
+                     {"point": point, "box": box})
+    if not seeds:
+        raise ValueError("Swap SAM 3.1: выберите человека на кадре")
     with torch.inference_mode():
         model = _model()
-        mask = _seed(model, rgb, point, box)[0].numpy()
+        picked = _dedupe_seeds([_seed(model, rgb, pt, bx) for pt, bx in seeds])
+    if not picked:
+        raise ValueError("Swap SAM 3.1: не удалось выделить выбранных людей")
+    mask = _union(picked)[0].numpy()
     mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_LINEAR) > .5
     overlay = src.astype(np.float32)
     overlay[mask] = overlay[mask] * .52 + np.array([30, 230, 120]) * .48
     return {"frame": frame, "image": _jpeg(overlay.astype(np.uint8)),
-            "coverage": round(float(mask.mean()), 4)}
+            "coverage": round(float(mask.mean()), 4), "people": len(picked)}
 
 
 def _hard_cut(previous, current):
@@ -334,14 +342,35 @@ def _person_detector(checkpoint):
     return YOLO(checkpoint)
 
 
-def _cache_dir(project_dir, path, point, w, h, box=None, anchors=None):
+def seeds_of(mask_config):
+    """[(point, box)] — one person per click, several for a multi-person swap. Legacy single point works."""
+    cfg = mask_config or {}
+    raw = cfg.get("seeds")
+    if isinstance(raw, list) and raw:
+        out = []
+        for e in raw:
+            if isinstance(e, dict):
+                p = e.get("point")
+                if isinstance(p, (list, tuple)) and len(p) == 2:
+                    out.append((tuple(float(v) for v in p), e.get("box")))
+            elif isinstance(e, (list, tuple)) and len(e) == 2:
+                out.append((tuple(float(v) for v in e), None))
+        if out:
+            return out
+    p = cfg.get("point")
+    if isinstance(p, (list, tuple)) and len(p) == 2:
+        return [(tuple(float(v) for v in p), cfg.get("box"))]
+    return []
+
+
+def _cache_dir(project_dir, path, seeds, w, h, anchors=None):
     st = os.stat(path)
     cp = os.stat(require_model())
     data = [os.path.normcase(os.path.abspath(path)), st.st_size, st.st_mtime_ns,
-            [round(float(x), 5) for x in point],
-            [round(float(x), 5) for x in box] if box else None,
+            [[[round(float(x), 5) for x in point],
+              [round(float(x), 5) for x in box] if box else None] for point, box in seeds],
             w, h, TRACK_SIDE, cp.st_size, cp.st_mtime_ns,
-            anchors or [], "sam3.1-shot-reset-v1"]
+            anchors or [], "sam3.1-multiperson-v1"]
     key = hashlib.sha256(json.dumps(data, ensure_ascii=False).encode()).hexdigest()[:20]
     return os.path.join(project_dir, "cache", "swap_sam3", key)
 
@@ -376,22 +405,61 @@ def _save_block(file, masks):
             os.unlink(tmp)
 
 
+def _dedupe_seeds(masks, iou_max=.5):
+    """Drop a seed that lands on a person another seed already covers (auto-seeding on a new shot)."""
+    keep = []
+    for mask in masks:
+        if mask is None or not bool((mask > .5).any()):
+            continue
+        clash = False
+        for kept in keep:
+            a, b = (mask[0] > .5).numpy(), (kept[0] > .5).numpy()
+            inter = float((a & b).sum())
+            union = float((a | b).sum())
+            if union and inter / union > iou_max:
+                clash = True
+                break
+        if not clash:
+            keep.append(mask)
+    return keep
+
+
+def _union(masks):
+    import torch
+    if not masks:
+        return None
+    out = masks[0].clone()
+    for m in masks[1:]:
+        out = torch.maximum(out, m)
+    return out
+
+
 def prepare(path, point, count, w, h, project_dir, progress=None, box=None, anchors=None):
-    """Track the selected person across segments; re-seed at each detected camera cut."""
+    """Track every selected person across the segments; re-seed them all at each detected camera cut.
+
+    `point` is one (x, y) or a list of them (multi-person swap); `box` may travel with each point.
+    The stored mask is the union, so every selected person is replaced and the background stays.
+    """
     import cv2
     import torch
     from comfy_extras.nodes_sam3 import SAM3_VideoTrack, SAM3_TrackToMask
     from . import h3s_media
-    if len(point) != 2 or not all(0 <= float(p) <= 1 for p in point):
+    if isinstance(point, dict):                      # mask_config passed straight through
+        seeds = seeds_of(point)
+    elif point and isinstance(point[0], (list, tuple, dict)):
+        seeds = seeds_of({"seeds": point})
+    else:
+        seeds = [(tuple(float(v) for v in point), box)] if len(point or ()) == 2 else []
+    if not seeds or any(len(p) != 2 or not all(0 <= v <= 1 for v in p) for p, _b in seeds):
         raise ValueError("Swap SAM 3.1: выберите точку на персонаже")
     tw, th = _scaled_size(w, h)
-    folder = _cache_dir(project_dir, path, point, w, h, box, anchors)
+    folder = _cache_dir(project_dir, path, seeds, w, h, anchors)
     cuts = set(detect_shot_cuts(path, int(count)))
     cuts.update(int(a["frame"]) for a in (anchors or [])
                 if isinstance(a, dict) and 0 < int(a.get("frame", 0)) < int(count))
     want_blocks = (int(count) + BLOCK - 1) // BLOCK
     current_model = None
-    last = None
+    last = [None] * len(seeds)
     for block_id in range(want_blocks):
         expected = min(BLOCK, int(count) - block_id * BLOCK)
         file = _block_path(folder, block_id)
@@ -401,7 +469,8 @@ def prepare(path, point, count, w, h, project_dir, progress=None, box=None, anch
                 if masks.ndim != 3 or masks.shape[1:] != (th, tw) or len(masks) < expected:
                     raise ValueError("Размер маски не совпадает")
                 # A previously cached longer block is valid for a shorter trim.
-                last = masks[expected - 1:expected]
+                tail = masks[expected - 1:expected]
+                last = [tail] + [None] * (len(seeds) - 1)
                 if progress:
                     progress(min((block_id + 1) * BLOCK, int(count)), int(count))
                 continue
@@ -422,22 +491,29 @@ def prepare(path, point, count, w, h, project_dir, progress=None, box=None, anch
         masks = np.zeros((expected, th, tw), dtype=np.float32)
         for left, right in zip(boundaries, boundaries[1:]):
             if left == 0:
-                seed = _seed(current_model, resized[left - offset], point, box)
+                seeds_here = [_seed(current_model, resized[left - offset], pt, bx) for pt, bx in seeds]
+                seeds_here = _dedupe_seeds(seeds_here)
             elif left in cuts:
-                seed = _auto_shot_seed(current_model, resized[left - offset], anchors, left)
+                # one auto seed per person: duplicates (the same bystander found twice) are dropped
+                seeds_here = _dedupe_seeds([_auto_shot_seed(current_model, resized[left - offset], anchors, left)
+                                            for _pt in seeds])
             else:
-                seed = torch.from_numpy(last.copy()) if last is not None else None
-            if seed is None or not bool((seed > .5).any()):
+                seeds_here = [torch.from_numpy(m.copy()) for m in last if m is not None]
+            if not seeds_here:
                 # Ambiguous new shot: leave source unchanged instead of replacing a bystander.
-                last = np.zeros((1, th, tw), dtype=np.float32)
+                last = [np.zeros((1, th, tw), dtype=np.float32)]
                 continue
             base = left if left in cuts or left == 0 else left - 1
             batch = torch.from_numpy(resized[base - offset:right - offset])
-            tracked = SAM3_VideoTrack.execute(batch, current_model, initial_mask=seed,
-                                              max_objects=1, detect_interval=1)[0]
-            segment_masks = SAM3_TrackToMask.execute(tracked, object_indices="0")[0].float().cpu().numpy()
-            if base < left:
-                segment_masks = segment_masks[1:]
+            per_person = []
+            for seed in seeds_here:
+                tracked = SAM3_VideoTrack.execute(batch, current_model, initial_mask=seed,
+                                                  max_objects=1, detect_interval=1)[0]
+                one = SAM3_TrackToMask.execute(tracked, object_indices="0")[0].float().cpu().numpy()
+                if base < left:
+                    one = one[1:]
+                per_person.append(one)
+            segment_masks = per_person[0] if len(per_person) == 1 else np.maximum.reduce(per_person)
             if segment_masks.shape != (right - left, th, tw):
                 raise RuntimeError("Swap SAM 3.1: неверное число масок в плане")
             masks[left - start:right - start] = segment_masks
@@ -465,7 +541,7 @@ def prepare(path, point, count, w, h, project_dir, progress=None, box=None, anch
                             (segment_masks[:jump], np.zeros((right - absolute, th, tw), dtype=np.float32)), axis=0)
                         masks[left - start:right - start] = segment_masks
                         cuts.add(absolute)
-            last = segment_masks[-1:]
+            last = [segment_masks[-1:]]
         _save_block(file, masks)
         if progress:
             progress(min((block_id + 1) * BLOCK, int(count)), int(count))
@@ -563,16 +639,18 @@ def composite(path, src_in, generated, mask_config, project_dir, progress=None):
     import torch
     from . import h3s_media
     n, h, w = map(int, generated.shape[:3])
-    point = mask_config["point"]
+    seeds = seeds_of(mask_config)
+    if not seeds:
+        raise ValueError("Swap SAM 3.1: выберите точку на персонаже")
     if int(mask_config.get("at", 0)) != 0:
         raise ValueError("Swap SAM 3.1: выбор персонажа пока поддерживается на первом кадре видео")
     anchors = mask_config.get("shots") or []
     cuts = set(detect_shot_cuts(path, int(src_in) + n))
     cuts.update(int(a["frame"]) for a in anchors
                 if isinstance(a, dict) and 0 < int(a.get("frame", 0)) < int(src_in) + n)
-    folder, (tw, th) = prepare(path, point, int(src_in) + n, w, h, project_dir,
+    folder, (tw, th) = prepare(path, seeds, int(src_in) + n, w, h, project_dir,
                               progress=(lambda a, b: progress(a, b, "track")) if progress else None,
-                              box=mask_config.get("box"), anchors=anchors)
+                              anchors=anchors)
     processed = 0
     active = 0
     guarded = 0

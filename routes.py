@@ -654,9 +654,15 @@ def register():
             src = pf.ref_path(q.get("ref") or {})
             if not src or not os.path.isfile(src):
                 raise ValueError("Не найден исходный видеофайл")
-            point = q.get("point")
-            if not isinstance(point, list) or len(point) != 2 or not all(0 <= float(v) <= 1 for v in point):
+            point = q.get("points") or q.get("point")
+            flat = [point] if (isinstance(point, list) and len(point) == 2
+                               and all(isinstance(v, (int, float)) for v in point)) else point
+            if not isinstance(flat, list) or not flat:
                 raise ValueError("Выберите человека на кадре")
+            for one in flat:
+                p = one.get("point") if isinstance(one, dict) else one
+                if not isinstance(p, list) or len(p) != 2 or not all(0 <= float(v) <= 1 for v in p):
+                    raise ValueError("Выберите человека на кадре")
             import asyncio
             data = await asyncio.get_running_loop().run_in_executor(
                 None, h3s_swap_mask.mask_preview, src, point,
