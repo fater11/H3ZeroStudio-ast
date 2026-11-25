@@ -94,16 +94,33 @@ def test_fallback_writer_makes_one_prompt_per_beat():
     written = S.fallback_prompts(plan, style="Neon night look.", sound="Distant crowd.")
     assert len(written["segments"]) == len(plan["beats"])
     first, second, last = (s["prompt"] for s in written["segments"])
-    for k, prompt in enumerate((first, second, last), start=1):
-        assert f"part {k} of 3" in prompt and "[Shot 1]" in prompt and prompt.rstrip().endswith("N/A")
+    for prompt in (first, second, last):
+        assert "[Shot 1]" in prompt and prompt.rstrip().endswith("N/A")
         assert "Neon night look." in prompt and "Distant crowd." in prompt
-    assert "This part opens the film." in first and "continues the previous part exactly" in second
-    assert "next one continues from" in second and "next one continues from" not in last
+        assert "subject_definitions:" in prompt and "summary:" in prompt
+        assert "[reference generation]" in prompt and "detailed_description:" in prompt
+    assert "opens the film" in first and "continues the previous part without a cut" in second
+    assert "next part can continue from" in second and "next part can continue from" not in last
     assert written["segments"][0]["note"].startswith("шаблон")          # the template says it is a draft
-    # the idea keeps its own sentences instead of being glued into the middle of one line
-    long_idea = S.plan_beats("Первая мысль. Вторая мысль!", 20, w=960, h=544, budget=200_000, beats=2)
-    text = S.fallback_prompts(long_idea)["segments"][0]["prompt"]
-    assert "Первая мысль. Вторая мысль! The part ends" in text
+
+
+def test_the_template_gives_every_beat_its_own_part_of_the_idea():
+    """Одно действие в двух отрезках = один и тот же кадр дважды: у каждого отрезка своя часть идеи."""
+    plan = S.plan_beats("Первая мысль. Вторая мысль!", 20, w=960, h=544, budget=200_000, beats=2)
+    segs = S.fallback_prompts(plan)["segments"]
+    assert "Первая мысль." in segs[0]["prompt"] and "Вторая мысль!" not in segs[0]["prompt"]
+    assert "Вторая мысль!" in segs[1]["prompt"] and "Первая мысль." not in segs[1]["prompt"]
+    # и предложения не склеиваются чужой строкой посередине
+    assert "Первая мысль. It ends" in segs[0]["prompt"]
+
+
+def test_the_template_does_not_claim_references_it_does_not_have():
+    """Без референсов строка retention_analysis врала бы о несуществующей картинке."""
+    plan = S.plan_beats("женщина и часы", 20, w=960, h=544, budget=200_000, beats=2)
+    plain = S.fallback_prompts(plan)["segments"][0]["prompt"]
+    assert "retention_analysis" not in plain
+    with_refs = S.fallback_prompts(plan, refs=("кадр женщины",))["segments"][0]["prompt"]
+    assert "retention_analysis:" in with_refs and "fully_preserved" in with_refs
 
 
 def test_write_series_uses_the_writer_and_falls_back_on_a_bad_answer():
@@ -127,7 +144,8 @@ def test_write_series_uses_the_writer_and_falls_back_on_a_bad_answer():
 
     fell = S.write_series(plan, fetch=broken, style="Sunny field.")
     assert fell["used"] == "template" and fell["error"] and len(fell["written"]["segments"]) == 2
-    assert "part 1 of 2" in fell["written"]["segments"][0]["prompt"]
+    assert "opens the film" in fell["written"]["segments"][0]["prompt"]
+    assert "continues the previous part" in fell["written"]["segments"][1]["prompt"]
     with pytest.raises(ValueError):
         S.write_series(plan, fetch=broken, allow_fallback=False)
     offline = S.write_series(plan)
@@ -158,7 +176,7 @@ def test_writing_one_segment_at_a_time():
     fell = S.write_series(plan, fetch=broken, only=1)
     assert fell["used"] == "template" and fell["error"] == "Fetch timeout"
     assert [s["index"] for s in fell["written"]["segments"]] == [1]     # the template fills just this beat
-    assert "part 2 of 3" in fell["written"]["segments"][0]["prompt"]
+    assert "continues the previous part without a cut" in fell["written"]["segments"][0]["prompt"]
     with pytest.raises(ValueError):
         S.write_series(plan, fetch=lambda m: json.dumps({"segments": [{"prompt": "a"}, {"prompt": "b"}]}),
                        only=0, allow_fallback=False)
@@ -245,3 +263,43 @@ def test_a_hopeless_writer_falls_back_after_two_attempts():
     got = S.write_series(plan, fetch=fetch, only=1)
     assert got["used"] == "template" and got["attempts"] == 2
     assert calls["n"] == 2 and got["written"]["segments"][0]["prompt"].startswith("subject_definitions")
+
+
+def test_a_replan_does_not_overwrite_a_written_prompt_with_the_draft():
+    """Перепланирование серии не должно молча затирать написанный моделью промт рыбой из шаблона."""
+    plan = S.plan_beats("женщина и часы", 20, w=960, h=544, budget=200_000, beats=2)
+    good = {"title": "", "logline": "", "segments": [
+        {"index": 0, "prompt": "detailed_description:\n[Shot 1] рука берёт пинцет", "note": ""},
+        {"index": 1, "prompt": "detailed_description:\n[Shot 1] шестерёнка встаёт на место", "note": ""}]}
+    first = S.build_project(plan, good, name="Часы")
+    draft = S.fallback_prompts(plan)
+    again = S.build_project(plan, draft, name="Часы", existing=first)
+    assert "рука берёт пинцет" in again["segments"][0]["prompt"]          # написанное осталось
+    assert "шестерёнка встаёт" in again["segments"][1]["prompt"]
+    # а когда раскладка другая, новый шаблон берётся целиком
+    other = S.plan_beats("женщина и часы", 40, w=960, h=544, budget=200_000, beats=3)
+    three = S.build_project(other, S.fallback_prompts(other), name="Часы", existing=first)
+    assert len(three["segments"]) == 3 and "рука берёт пинцет" not in three["segments"][0]["prompt"]
+
+
+def test_a_one_sentence_idea_is_split_between_the_beats():
+    """Длинная идея одним предложением не должна целиком повторяться в каждом отрезке."""
+    plan = S.plan_beats("Женщина снимает часы со стены; чистит механизм кистью; ставит на место и заводит их.",
+                        30, w=960, h=544, budget=200_000, beats=3)
+    segs = S.fallback_prompts(plan)["segments"]
+    texts = [s["prompt"].split("[Shot 1]")[1].lower() for s in segs]
+    assert "снимает часы" in texts[0] and "снимает часы" not in texts[1]
+    assert "чистит механизм" in texts[1] and "ставит на место" in texts[2]
+    assert "чистит механизм" not in texts[0] and "ставит на место" not in texts[1]   # у каждого свой кусок
+
+
+def test_split_clauses_keep_their_punctuation():
+    """Разбор идеи на части не должен склеивать слова соседних действий."""
+    plan = S.plan_beats("Мастер снимает часы со стены, чистит механизм кистью и заводит их.", 20,
+                        w=960, h=544, budget=200_000, beats=2)
+    segs = S.fallback_prompts(plan)["segments"]
+    for seg in segs:
+        body = seg["prompt"].split("[Shot 1]")[1]
+        for bad in ("кистью ставит", "стены чистит", "заводит часы начинают"):
+            assert bad not in body
+    assert "Снимает часы со стены." in segs[0]["prompt"] or "Мастер снимает часы со стены." in segs[0]["prompt"]

@@ -519,11 +519,13 @@ def register():
             plan = b.get("plan") or {}
             if not plan.get("beats"):
                 raise ValueError("Серия: нет плана отрезков")
+            from . import h3s_library as lib
+            name = b.get("name") or None
+            existing = lib.project_get(lib.clean_id(name)) if name else None
             project = series.build_project(plan, b.get("written") or {}, settings=b.get("settings") or {},
-                                           name=b.get("name") or None)
+                                           name=name, existing=existing)
             saved = None
             if b.get("save"):
-                from . import h3s_library as lib
                 saved = lib.project_save(project, {"name": project["name"], "series": True})
             return {"project": project, "saved": saved, "new_frames": series.total_new_frames(project)}
         return await _json_call(work)

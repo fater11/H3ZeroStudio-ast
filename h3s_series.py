@@ -263,45 +263,95 @@ def _idea_sentences(idea):
     return out
 
 
-def fallback_prompts(plan, style="", sound="", voice=""):
+def _tidy_clause(text):
+    """Кусок фразы → отдельное предложение: разделители не должны склеивать слова («кистью ставит»)."""
+    line = " ".join(str(text or "").split()).strip(" ,;—–-")
+    if not line:
+        return ""
+    line = line[0].upper() + line[1:]
+    return line if line.endswith((".", "!", "?", "…")) else line + "."
+
+
+def _idea_beats(idea, count):
+    """Идея → ровно `count` частей, по одной на отрезок (одна и та же фраза дважды — плохой промт).
+
+    Предложений обычно меньше, чем отрезков, поэтому самую длинную фразу дробим по `;`, `,` и ` — `
+    (это черновик: аккуратный текст всё равно пишет человек или модель).
+    """
+    parts = _idea_sentences(idea)
+    while len(parts) < count:
+        cut, pieces = -1, []
+        for i, part in enumerate(parts):
+            split = [_tidy_clause(p) for p in re.split(r";\s*|\s+—\s+|,\s+(?=[а-яёa-z])", part) if p.strip()]
+            if len(split) > 1 and len(split) > len(pieces):
+                cut, pieces = i, split
+        if cut < 0:
+            break
+        parts[cut:cut + 1] = pieces
+    if not parts:
+        parts = [""]
+    while len(parts) < count:
+        parts.append(parts[-1])                       # вырожденный случай: одна мысль на несколько отрезков
+    if len(parts) > count:
+        parts = parts[:count - 1] + [" ".join(parts[count - 1:])]
+    return parts
+
+
+SLICE_HINT = ("Each segment describes only its own beat of the idea, in its own words: the same action must "
+              "never be repeated in two segments.")
+
+
+def fallback_prompts(plan, style="", sound="", voice="", refs=()):
     """Шаблонный писатель: серия собирается без LLM (промты в формате H3, по отрезку на шаг).
 
-    Это рыба, а не готовый промт: идея повторяется в описании как есть, оговаривается часть и связь с
-    предыдущей — по ней удобно писать свой текст или править ответ модели. В `note` стоит пометка «шаблон».
+    Промт собран как пресеты пака: `subject_definitions` → `summary` с `[reference generation]` →
+    `retention_analysis` (только когда у отрезка есть референсы, иначе строка врёт о несуществующей
+    картинке) → `detailed_description` со строкой `[Shot 1]` → `overall_soundscape` → `non_diegetic_music`.
+    Каждый отрезок берёт свою часть идеи: повторять одно действие дважды — значит получить один и тот же
+    кадр дважды. Это рыба, а не готовый промт; в `note` стоит пометка «шаблон».
     """
     beats = plan["beats"]
     sentences = _idea_sentences(plan["idea"])
-    body = " ".join(sentences)
+    parts = _idea_beats(plan["idea"], len(beats))
     out = []
     for b in beats:
-        part = f"{b['index'] + 1} of {len(beats)}"
-        cont = ("The first frame continues the previous part exactly: the same framing, light and pose."
-                if b["overlap"] else "This part opens the film.")
-        tail = (" The part ends in a pose the next one continues from."
-                if b["index"] < len(beats) - 1 else " The part ends the film.")
+        i = b["index"]
+        beat_text = parts[i]                          # своя часть идеи у каждого отрезка
+        if beat_text and not beat_text.endswith((".", "!", "?", "…")):
+            beat_text += "."
+        opening = ("[Shot 1] The shot continues the previous part without a cut: it opens on the exact same "
+                   "framing, light and pose the part before it ended with." if b["overlap"]
+                   else "[Shot 1] The shot opens the film: the camera is already settled on the scene.")
+        closing = ("It ends on a pose, framing and light the next part can continue from."
+                   if i < len(beats) - 1 else "It ends the film on a held final pose while the motion settles.")
         lines = [
             "subject_definitions:",
-            f"<Subject 1> is the person of the scene: the same face, hair, build and outfit in every part "
-            f"(this shot is part {part}).",
+            "<Subject 1> is the person of the scene: the same face, hair, build and wardrobe as in every other "
+            "part of this film.",
             "summary:",
-            f"[reference generation] The target video presents a {b['seconds']:.1f}-second shot, part {part} "
-            f"of one continuous story.",
-            "retention_analysis:",
-            "<Subject 1> (appears in [Shot 1]): fully_preserved - the look and outfit stay the same from the "
-            "first frame to the last.",
+            f"[reference generation] A {b['seconds']:.2f}-second shot of one continuous film: {beat_text}",
+        ]
+        if refs:
+            lines += ["retention_analysis:",
+                      "<Subject 1> (appears in [Shot 1]): fully_preserved - face, hair and wardrobe follow the "
+                      "reference exactly, with no change of hairstyle, clothing or accessories."]
+        lines += [
             "detailed_description:",
-            f"{style or 'A realistic live-action scene, real-time speed, no slow motion.'}",
-            f"[Shot 1] {cont} {body}{tail}",
+            style or "Live-action, cinematic, real-time speed. Natural light, fine film grain, stable framing, "
+                     "a hand-held texture that stays calm.",
+            f"{opening} {beat_text} {closing}",
+            "The person's hands, gaze and breathing carry the action: unhurried, deliberate, physically "
+            "believable, with no extra people entering the frame.",
             "overall_soundscape:",
-            sound or "The sound of the scene, matching the action on screen.",
+            sound or "The quiet ambience of the room and the small sounds the action itself makes.",
             "non_diegetic_music:",
             "N/A",
         ]
         if voice:
             lines.append(f"spoken: {voice}")
-        out.append({"index": b["index"], "prompt": "\n".join(lines),
+        out.append({"index": i, "prompt": "\n".join(lines),
                     "note": "шаблон — напишите свой текст или подключите модель в «Ассистенте»"})
-    return {"title": " ".join(sentences)[:60], "logline": body, "segments": out}
+    return {"title": " ".join(sentences)[:60], "logline": " ".join(sentences), "segments": out}
 
 
 def write_series(plan, fetch=None, style="", refs=(), language="ru", extra="", sound="", allow_fallback=True,
@@ -315,7 +365,7 @@ def write_series(plan, fetch=None, style="", refs=(), language="ru", extra="", s
                                only=only)
 
     def template(index=None):
-        full = fallback_prompts(plan, style=style, sound=sound)
+        full = fallback_prompts(plan, style=style, sound=sound, refs=refs)
         if index is None:
             return full
         one = next((s for s in full["segments"] if s["index"] == int(index)), None)
@@ -353,10 +403,31 @@ def write_series(plan, fetch=None, style="", refs=(), language="ru", extra="", s
                 **({"only": only} if only is not None else {})}
 
 
-def build_project(plan, written, settings=None, name=None):
-    """Серия → обычный проект пака: отрезки со связью, перекрытием и промтами."""
+def _is_draft(segment):
+    """Промт-рыба из шаблона (её можно заменить, а написанный моделью текст — нет)."""
+    return str((segment or {}).get("note") or "").startswith("шаблон")
+
+
+def build_project(plan, written, settings=None, name=None, existing=None):
+    """Серия → обычный проект пака: отрезки со связью, перекрытием и промтами.
+
+    `existing` — уже сохранённый проект этой же серии: если раскладка отрезков та же, а новый промт
+    пришёл из шаблона, оставляем написанный ранее (моделью) промт — перепланирование не должно молча
+    затирать чужой текст рыбой.
+    """
     from . import h3s_library as lib
-    prompts = {s["index"]: s["prompt"] for s in (written or {}).get("segments", [])}
+    prompt_items = {s["index"]: s for s in (written or {}).get("segments", [])}
+    old = {i: seg for i, seg in enumerate((existing or {}).get("segments") or [])}
+    same_layout = bool(old) and len(old) == len(plan["beats"]) and all(
+        int(old[i].get("frames") or 0) == int(plan["beats"][i]["frames"]) for i in old)
+    prompts = {}
+    for i, item in prompt_items.items():
+        kept = old.get(i) if same_layout else None
+        # рыба из шаблона не имеет права затирать уже написанный текст при перепланировании
+        if kept and _is_draft(item) and str(kept.get("prompt") or "").strip():
+            prompts[i] = kept["prompt"]
+        else:
+            prompts[i] = item["prompt"]
     segments = []
     for b in plan["beats"]:
         segments.append({"id": f"s{b['index'] + 1}", "name": f"{b['index'] + 1}. {b['role']}",
