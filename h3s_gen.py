@@ -2131,6 +2131,48 @@ def project_dir(project):
     return d, sub.replace("\\", "/")
 
 
+def sweep_stream_files(folder, keep=None, min_age=300.0):
+    """Убрать брошенные файлы потокового экспорта (`.stream_<pid>_<thread>.frames`) из папки проекта.
+
+    Их оставляют прошлые запуски, если Windows не отдал файл сразу (он был ещё отображён в память):
+    имя содержит pid и поток, поэтому чужой живой файл не тронуть, а освободить гигабайты нужно.
+    """
+    import glob
+    import time as _time
+    freed, kept = 0, 0
+    now = _time.time()
+    for path in glob.glob(os.path.join(folder, ".stream_*.frames")):
+        if keep and os.path.abspath(path) == os.path.abspath(keep):
+            kept += 1
+            continue
+        try:
+            if min_age and (now - os.path.getmtime(path)) < float(min_age):
+                kept += 1
+                continue
+            freed += os.path.getsize(path)
+            os.remove(path)
+        except OSError:
+            kept += 1
+    return {"freed": freed, "kept": kept}
+
+
+def remove_stream_file(path, tries=12, delay=0.4):
+    """Удалить файл потокового экспорта с повторами: Windows отпускает отображённый файл не сразу."""
+    import gc
+    import time as _time
+    for attempt in range(max(1, int(tries))):
+        try:
+            os.remove(path)
+            return True
+        except FileNotFoundError:
+            return True
+        except OSError:
+            gc.collect()
+            if attempt + 1 < int(tries):
+                _time.sleep(float(delay))
+    return False
+
+
 def anchor_base_index(items, i):
     """Номер отрезка, который держит текущую цепочку продлений: последний перед `i` со связью «новая сцена».
 
@@ -4055,6 +4097,9 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
     frames = direct = None   # the last clip's frames from the loop above are no longer needed (they would stay alive to the end)
     stream_file = os.path.join(d, f".stream_{os.getpid()}_{threading.get_ident()}.frames") if stream_output else None
     if stream_output:
+        swept = sweep_stream_files(d, keep=stream_file)
+        if swept["freed"]:
+            log(f"streaming: освобождено {swept['freed'] / 1e9:.2f} ГБ брошенных файлов кадров")
         images, out_lens = cat_to_disk(out_frames, stream_file)
         log(f"streaming: disk-backed video frames ({images.shape[0]} frames), full IMAGE output disabled")
     else:
@@ -4384,10 +4429,8 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         del images
         import gc
         gc.collect()
-        try:
-            os.remove(stream_file)
-        except OSError as e:
-            log(f"streaming: temporary file cleanup deferred: {e}")
+        if not remove_stream_file(stream_file):
+            log(f"streaming: временный файл кадров занят — уберём при следующем запуске ({stream_file})")
         images = preview_frame
     return images, out_audio, latent, {"segments": results, "full": full, "keys": keys, "estimate": est,
                                        "audio_source": src_info, "regions": reg_results, "fsigs": fsigs,

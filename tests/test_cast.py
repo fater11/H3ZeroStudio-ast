@@ -70,6 +70,17 @@ def test_analyse_end_to_end_builds_cast_and_moments():
     assert report["duration_s"] == pytest.approx(len(frames) / 6.0, abs=0.01)
 
 
+def test_export_package_wants_frames_by_video_number(tmp_path):
+    """Ключ кадров — номер видео: словарь по порядку молча давал TypeError вместо понятной ошибки."""
+    keyframes = [{"frame": 30, "at_seconds": 1.25, "keyindex": 1, "people": [], "labels": {}, "sentence": ""}]
+    frames = {30: np.full((8, 8, 3), 200, dtype="uint8")}
+    request = cast.build_request("cast", keyframes, [], {})
+    with zipfile.ZipFile(cast.export_package(tmp_path / "p.zip", frames, keyframes, [], request)["zip"]) as z:
+        assert "keyframe_1.png" in z.namelist()
+    with pytest.raises(ValueError, match="нет кадра"):
+        cast.export_package(tmp_path / "q.zip", {0: np.zeros((8, 8, 3), dtype="uint8")}, keyframes, [], request)
+
+
 def test_package_round_trip(tmp_path):
     frames = {6: np.zeros((16, 24, 3), dtype="uint8"), 18: np.full((16, 24, 3), 200, dtype="uint8")}
     char_path = tmp_path / "new_person.png"

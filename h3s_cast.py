@@ -264,7 +264,11 @@ def export_package(zip_path, frames, keyframes, characters, request, readme=True
     with zipfile.ZipFile(str(zip_path), "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("request.json", json.dumps(request, ensure_ascii=False, indent=2))
         for i, kf in enumerate(keyframes, start=1):
+            # ключ — номер кадра видео (kf["frame"]), поэтому словарь должен быть по номерам, а не по порядку
             frame = frames.get(kf["frame"]) if isinstance(frames, dict) else frames[kf["frame"]]
+            if frame is None:
+                raise ValueError(f"Каст: нет кадра {kf.get('frame')!r} для ключевого кадра {i} "
+                                 f"(кадры должны идти по номерам видео)")
             buf = io.BytesIO()
             Image.fromarray(np.asarray(frame).astype("uint8")).save(buf, format="PNG")
             z.writestr(f'keyframe_{kf.get("keyindex", i)}.png', buf.getvalue())

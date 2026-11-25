@@ -685,8 +685,8 @@ def register():
             folder = os.path.join(tv.root(), "keyframes")
             os.makedirs(folder, exist_ok=True)
             out = os.path.join(folder, (b.get("package") or "cast") + "_keyframes.zip")
-            res = cast.export_package(out, {i: np.asarray(f) for i, f in enumerate(frames)}, keyframes,
-                                      characters, request_json)
+            frame_map = {int(kf.get("frame", i)): np.asarray(f) for i, (kf, f) in enumerate(zip(keyframes, frames))}
+            res = cast.export_package(out, frame_map, keyframes, characters, request_json)
             res["request"] = request_json
             res["answer_file"] = cast.answer_file_for(out)
             return res
