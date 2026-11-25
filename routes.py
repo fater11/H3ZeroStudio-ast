@@ -415,6 +415,58 @@ def register():
             return tv.playlist_export(files, out)
         return await _json_call(work)
 
+    # ------------------------------------------------------------------- ref splice (движения из видео)
+    @routes.post("/h3lab/splice/draft")
+    async def splice_draft(request):
+        from . import h3s_splice as splice
+        b = await request.json()
+
+        def work():
+            text = splice.draft_script(b.get("video") or "", duration=b.get("duration"),
+                                       cuts=b.get("cuts") or None, min_clip=float(b.get("min_clip") or 1.5),
+                                       max_clips=int(b.get("max_clips") or 8))
+            return {"script": text, "video": b.get("video") or ""}
+        return await _json_call(work)
+
+    @routes.post("/h3lab/splice/plan")
+    async def splice_plan(request):
+        from . import h3s_splice as splice
+        b = await request.json()
+
+        def work():
+            info = splice.media.video_info(b.get("video") or "")
+            script = splice.parse_script(b.get("script") or "")
+            timeline = splice.build_timeline(script, src_dur=info.get("duration"))
+            plan = splice.plan_shots(script, timeline, b.get("name") or "splice", b.get("video") or "",
+                                     characters=b.get("characters") or [], w=int(b.get("width") or 1344),
+                                     h=int(b.get("height") or 768),
+                                     budget=int(b["budget"]) if b.get("budget") else None)
+            return {"plan": plan, "script": script,
+                    "shots": [{"kind": s["kind"], "frames": s["length"], "overlap": s["overlap"],
+                               "prompt": seg["prompt"]} for s, seg in zip(timeline["shots"], plan["segments"])]}
+        return await _json_call(work)
+
+    @routes.post("/h3lab/splice/render")
+    async def splice_render(request):
+        from . import h3s_splice as splice
+        b = await request.json()
+
+        def work():
+            script = splice.parse_script(b.get("script") or "")
+            info = splice.media.video_info(b.get("video") or "")
+            timeline = splice.build_timeline(script, src_dur=info.get("duration"))
+            import os
+            from . import h3s_tv as tv
+            folder = os.path.join(tv.root(), "splice")
+            os.makedirs(folder, exist_ok=True)
+            out = splice.write_splice(b.get("script") or "", b.get("video") or "", folder,
+                                      name=b.get("name") or "splice", w=b.get("width"), h=b.get("height"),
+                                      characters=b.get("characters") or [])
+            out["script"] = splice.script_to_text(out["script"])
+            out["plan"]["reference"] = out["reference"]
+            return out
+        return await _json_call(work)
+
     # ---------------------------------------------------------------- multi-person cast + keyframes
     @routes.post("/h3lab/cast/analyse")
     async def cast_analyse(request):
