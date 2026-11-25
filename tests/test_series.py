@@ -129,6 +129,36 @@ def test_write_series_uses_the_writer_and_falls_back_on_a_bad_answer():
     assert offline["used"] == "template" and len(offline["written"]["segments"]) == 2
 
 
+def test_writing_one_segment_at_a_time():
+    """Клиент пишет по отрезку за запрос: длинная серия не зависит от одного длинного ответа."""
+    plan = S.plan_beats("Мастер реставрирует старый глобус", 40, w=960, h=544, budget=200_000, beats=3)
+    asked = []
+
+    def fetch(messages):
+        asked.append(messages[1]["content"])
+        return json.dumps({"segments": [{"prompt": "detailed_description:\n[Shot 1] он снимает слой краски"}]},
+                          ensure_ascii=False)
+
+    for k in range(3):
+        got = S.write_series(plan, fetch=fetch, only=k)
+        assert got["used"] == "llm" and len(got["written"]["segments"]) == 1
+        assert got["written"]["segments"][0]["index"] == k
+        assert f"отрезок {k + 1} из 3" in asked[-1]                      # the writer is told which one
+        assert got["messages"][0]["content"].count("Ровно 1 элемент") == 1
+    assert len(asked) == 3 and len(set(asked)) == 3
+
+    def broken(_messages):
+        raise RuntimeError("Fetch timeout")
+
+    fell = S.write_series(plan, fetch=broken, only=1)
+    assert fell["used"] == "template" and fell["error"] == "Fetch timeout"
+    assert [s["index"] for s in fell["written"]["segments"]] == [1]     # the template fills just this beat
+    assert "part 2 of 3" in fell["written"]["segments"][0]["prompt"]
+    with pytest.raises(ValueError):
+        S.write_series(plan, fetch=lambda m: json.dumps({"segments": [{"prompt": "a"}, {"prompt": "b"}]}),
+                       only=0, allow_fallback=False)
+
+
 def test_build_project_gives_a_normal_pack_project():
     plan = S.plan_beats("Двое настраивают лодку у причала", 30, w=960, h=544, budget=200_000, beats=3,
                         overlap_blocks=1)

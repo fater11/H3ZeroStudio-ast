@@ -498,10 +498,12 @@ def register():
                                                 api_key=str(b.get("api_key") or ""),
                                                 api_model=str(b.get("api_model") or ""),
                                                 thinking=False)
+            only = b.get("only")
             return series.write_series(plan, fetch=fetch, style=str(b.get("style") or ""),
                                        refs=list(b.get("refs") or []), language=str(b.get("language") or "ru"),
                                        extra=str(b.get("extra") or ""), sound=str(b.get("sound") or ""),
-                                       allow_fallback=b.get("allow_fallback", True))
+                                       allow_fallback=b.get("allow_fallback", True),
+                                       only=int(only) if only is not None else None)
         return await _json_call(work)
 
     @routes.post("/h3lab/series/project")

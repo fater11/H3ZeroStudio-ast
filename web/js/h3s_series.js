@@ -34,6 +34,7 @@ export function installSeries(Editor, { C, h, ICON }) {
   };
 
   const field = (label, node) => h("label", null, h("span", null, label), node);
+  const contains = (list, k) => !!(list || []).find((s) => s && s.index === k);
   const input = (value, oninput, type = "text") => h("input", { type, value: value ?? "", oninput: (e) => oninput(e.target.value) });
   const num = (value, oninput) => input(value, oninput, "number");
   const area = (value, oninput) => h("textarea", { value: value ?? "", oninput: (e) => oninput(e.target.value) });
@@ -108,9 +109,10 @@ export function installSeries(Editor, { C, h, ICON }) {
           h("button", { class: "pri", onclick: () => this.srProject(true) }, T("Создать и сохранить"))),
         plan && st.written ? h("div", null,
           h("div", { class: "rep" }, `${st.written.title || ""} ${st.written.logline ? "· " + st.written.logline : ""}`
-            + ` · ${T("писатель: {0}", st.written.error ? T("шаблон (модель не ответила)") : (st.used === "llm" ? T("модель") : T("шаблон")))}`),
-          h("pre", null, (seg || {}).prompt || ""),
-          h("button", { onclick: () => this.srCopy((seg || {}).prompt) }, T("Копировать промпт")))
+            + ` · ${T("писатель: {0}", st.used === "llm" ? T("модель") : T("шаблон"))}`),
+          h("pre", null, (seg || {}).prompt || (contains(st.written.segments, st.shot) ? "" : T("Промта пока нет"))),
+          h("button", { onclick: () => this.srCopy((seg || {}).prompt) }, T("Копировать промпт")),
+          h("button", { onclick: () => this.srRewrite() }, T("Написать заново")))
           : h("span", null, ""));
 
       body.append(ideaCol, promptCol);
@@ -139,21 +141,67 @@ export function installSeries(Editor, { C, h, ICON }) {
       this.srRender();
     },
 
-    async srWrite() {
+    // One segment per request: a long series never depends on one long answer, and a model that stalls
+    // costs a single segment (that one falls back to the template writer) instead of the whole series.
+    async srWriteOne(k, useLlm) {
       const st = this.srState, cfg = (this.p.assistant || {}).cfg || {};
+      const body = { plan: st.plan, idea: st.idea, style: st.style, sound: st.sound, extra: st.extra,
+                     only: k, use_llm: useLlm !== false, allow_fallback: false,
+                     api_base: cfg.api_base, api_key: cfg.api_key, api_model: cfg.api_model,
+                     temperature: cfg.temperature, max_tokens: cfg.max_tokens };
+      const d = await this.host.call("/h3lab/series/write", body);
+      const segs = (d.written && d.written.segments) || [];
+      if (!segs.length) throw new Error(T("Отрезок {0} пришёл без промта", k + 1));
+      if (segs.length > 1) {                 // an older server still writes the whole series in one answer
+        for (const one of segs) if (one && one.index !== undefined) st.written.segments[one.index] = one;
+        st.allAtOnce = true;
+      }
+      const seg = segs.find((s) => s && s.index === k) || segs[0];
+      st.written.segments[k] = seg;
+      st.written.title = st.written.title || d.written.title || "";
+      st.written.logline = st.written.logline || d.written.logline || "";
+      return d.used;
+    },
+
+    async srWrite() {
+      const st = this.srState;
       if (!st.plan) await this.srPlan();
       if (!st.plan) return;
+      const n = st.plan.beats.length;
+      st.written = { segments: [], title: "", logline: "" };
+      st.firstError = ""; st.used = "";
+      let fromModel = 0, errors = 0;
+      st.allAtOnce = false;
+      for (let k = 0; k < n; k++) {
+        st.report = T("Пишу промты… {0}/{1}", k + 1, n); this.srRender();
+        try {
+          if (await this.srWriteOne(k, st.useLlm) === "llm") fromModel++;
+          if (st.allAtOnce) { fromModel = n; break; }            // the whole series arrived in one answer
+        } catch (e) {
+          errors++;
+          if (!st.firstError) st.firstError = String(e.message || e);
+          try { await this.srWriteOne(k, false); } catch (_e) { /* the plan stays, the prompt is empty */ }
+        }
+      }
+      st.used = fromModel ? "llm" : "template";
+      st.report = fromModel === n ? T("Промты написаны моделью")
+        : T("Промты: модель {0} из {1}, остальные — шаблон", fromModel, n)
+          + (st.firstError ? ` · ${st.firstError}` : "");
+      st.project = null;
+      this.srRender();
+    },
+
+    async srRewrite() {
+      const st = this.srState, k = st.shot;
+      if (!st.plan || !st.written) return;
+      st.report = T("Пишу промты… {0}/{1}", k + 1, st.plan.beats.length); this.srRender();
       try {
-        st.report = T("Пишу промты…"); this.srRender();
-        const d = await this.host.call("/h3lab/series/write", { plan: st.plan, idea: st.idea, style: st.style,
-          sound: st.sound, extra: st.extra, use_llm: st.useLlm, allow_fallback: true,
-          api_base: cfg.api_base, api_key: cfg.api_key, api_model: cfg.api_model,
-          temperature: cfg.temperature, max_tokens: cfg.max_tokens });
-        st.written = d.written; st.used = d.used;
-        st.report = d.used === "llm" ? T("Промты написаны моделью") : T("Промты собраны шаблоном")
-          + (d.error ? ` · ${d.error}` : "");
-        st.project = null;
-      } catch (e) { st.report = String(e.message || e); }
+        st.used = await this.srWriteOne(k, st.useLlm) === "llm" ? "llm" : "template";
+        st.report = st.used === "llm" ? T("Отрезок {0} переписан моделью", k + 1) : T("Отрезок {0} собран шаблоном", k + 1);
+      } catch (e) {
+        try { await this.srWriteOne(k, false); st.report = T("Отрезок {0} собран шаблоном", k + 1); }
+        catch (e2) { st.report = String(e2.message || e2); }
+      }
       this.srRender();
     },
 

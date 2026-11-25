@@ -111,8 +111,12 @@ CONTRACT = """Ты пишешь промты для модели MiniMax H3: с�
 """
 
 
-def writer_messages(idea, plan, style="", refs=(), language="ru", extra=""):
-    """Задание писателю: идея + посчитанные отрезки + наш контракт формата."""
+def writer_messages(idea, plan, style="", refs=(), language="ru", extra="", only=None):
+    """Задание писателю: идея + посчитанные отрезки + наш контракт формата.
+
+    `only` — писать промт одного отрезка (индекс): так длинная серия не зависит от одного длинного ответа,
+    а сбой модели стоит одного отрезка, а не всей серии.
+    """
     beats = plan["beats"]
     lines = [f"Идея: {plan['idea'] or idea}",
              f"Всего времени: {plan['seconds']:.1f} с на {len(beats)} отрезков (склейка встык или продолжение)."]
@@ -130,10 +134,16 @@ def writer_messages(idea, plan, style="", refs=(), language="ru", extra=""):
     if extra:
         lines.append(f"Дополнительно: {extra}")
     # no str.format here: the contract itself shows a JSON object, so its braces are not placeholders
-    head = (CONTRACT.replace("{count}", str(len(beats)))
-            .replace("{seconds}", " / ".join(f"{b['seconds']:.1f}" for b in beats))
-            .replace("{new_frames}", " / ".join(str(b["new_frames"]) for b in beats))
+    head = (CONTRACT.replace("{count}", "1" if only is not None else str(len(beats)))
+            .replace("{seconds}", f"{beats[only]['seconds']:.1f}" if only is not None
+                     else " / ".join(f"{b['seconds']:.1f}" for b in beats))
+            .replace("{new_frames}", str(beats[only]["new_frames"]) if only is not None
+                     else " / ".join(str(b["new_frames"]) for b in beats))
             .replace("{link_hint}", "продолжение" if len(beats) > 1 else "начало"))
+    if only is not None:
+        head += (f"\n\nПиши ТОЛЬКО отрезок {only + 1} из {len(beats)}: верни ровно 1 элемент в segments. "
+                 f"Остальные отрезки серии уже написаны или будут написаны отдельно.")
+        lines = [f"Это отрезок {only + 1} из {len(beats)}."] + lines
     return [{"role": "system", "content": head},
             {"role": "user", "content": "\n".join(lines)}]
 
@@ -154,20 +164,24 @@ def _json_block(text):
     raise ValueError("Писатель вернул не JSON — нужен объект с segments")
 
 
-def parse_answer(text, plan):
-    """Ответ писателя → проверенные промты (число отрезков должно совпасть с планом)."""
+def parse_answer(text, plan, expect=None, index=None):
+    """Ответ писателя → проверенные промты (число отрезков должно совпасть с ожидаемым).
+
+    `expect` — сколько элементов ждём (по умолчанию все отрезки), `index` — чей это промт, когда пишут по одному.
+    """
     data = _json_block(text)
     segs = data.get("segments") if isinstance(data, dict) else data
     if not isinstance(segs, list):
         raise ValueError("Писатель вернул не JSON — нужен объект с segments")
-    if len(segs) != len(plan["beats"]):
-        raise ValueError(f"Писатель вернул {len(segs)} отрезков вместо {len(plan['beats'])}")
+    want = int(expect if expect is not None else len(plan["beats"]))
+    if len(segs) != want:
+        raise ValueError(f"Писатель вернул {len(segs)} отрезков вместо {want}")
     out = []
     for i, item in enumerate(segs):
         prompt = item.get("prompt") if isinstance(item, dict) else str(item)
         if not prompt or not str(prompt).strip():
             raise ValueError(f"Отрезок {i + 1} пришёл без промта")
-        out.append({"index": i, "prompt": str(prompt).strip(),
+        out.append({"index": int(index) if index is not None else i, "prompt": str(prompt).strip(),
                     "note": str((item.get("note") if isinstance(item, dict) else "") or "").strip()})
     return {"title": str(data.get("title") or "") if isinstance(data, dict) else "",
             "logline": str(data.get("logline") or "") if isinstance(data, dict) else "",
@@ -206,24 +220,35 @@ def fallback_prompts(plan, style="", sound="", voice=""):
     return {"title": plan["idea"][:60], "logline": idea, "segments": out}
 
 
-def write_series(plan, fetch=None, style="", refs=(), language="ru", extra="", sound="", allow_fallback=True):
+def write_series(plan, fetch=None, style="", refs=(), language="ru", extra="", sound="", allow_fallback=True,
+                 only=None):
     """Промты для серии: писателем (если он есть) или шаблоном; при сбое писателя — шаблон и причина.
 
     `fetch(messages) -> текст ответа` — любая функция вызова модели, поэтому логика проверяется без LLM.
+    `only` — писать промт одного отрезка: длинная серия не зависит от одного длинного ответа.
     """
-    messages = writer_messages(plan["idea"], plan, style=style, refs=refs, language=language, extra=extra)
+    messages = writer_messages(plan["idea"], plan, style=style, refs=refs, language=language, extra=extra,
+                               only=only)
+
+    def template(index=None):
+        full = fallback_prompts(plan, style=style, sound=sound)
+        if index is None:
+            return full
+        one = next((s for s in full["segments"] if s["index"] == int(index)), None)
+        return {"title": full["title"], "logline": full["logline"], "segments": [one] if one else []}
+
     if fetch is None:
-        return {"written": fallback_prompts(plan, style=style, sound=sound), "used": "template",
-                "messages": messages}
+        return {"written": template(only), "used": "template", "messages": messages}
     try:
-        written = parse_answer(fetch(messages), plan)
-        return {"written": written, "used": "llm", "messages": messages}
+        written = parse_answer(fetch(messages), plan, expect=1 if only is not None else None, index=only)
+        return {"written": written, "used": "llm", "messages": messages, **({"only": only} if only is not None else {})}
     except Exception as exc:
         if not allow_fallback:
             raise
-        fallback = fallback_prompts(plan, style=style, sound=sound)
+        fallback = template(only)
         fallback["error"] = str(exc)
-        return {"written": fallback, "used": "template", "messages": messages, "error": str(exc)}
+        return {"written": fallback, "used": "template", "messages": messages, "error": str(exc),
+                **({"only": only} if only is not None else {})}
 
 
 def build_project(plan, written, settings=None, name=None):
