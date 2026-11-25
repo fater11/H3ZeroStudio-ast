@@ -185,6 +185,7 @@ def test_prompt_editor_llm_improvement_stream_and_apply():
     assert 'export function astImproveSystem' in assist_js
     script = r"""
 import { installPromptEditor } from './web/js/h3s_prompted.js';
+import * as C from './web/js/h3s_core.js';
 import { astImproveSystem } from './web/js/h3s_assist.js';
 class El {
   constructor(tag) { this.tag = tag; this.children = []; this.classList = { add(){}, toggle(){} }; }
@@ -200,7 +201,7 @@ const h = (tag, attrs, ...children) => {
   return el;
 };
 class Editor {}
-installPromptEditor(Editor, { C: { FPS: 24 }, h, ICON: {} });
+installPromptEditor(Editor, { C, h, ICON: {} });   // настоящий core: редактор опирается на его помощники
 const e = new Editor(), root = new El('root');
 e.p = { assistant: { cfg: { api_model:'test-model', api_base:'http://localhost:1234/v1',
   api_key:'test', max_tokens:3200, top_p:.9, temperature:.3 } } };
