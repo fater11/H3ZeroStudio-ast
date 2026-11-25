@@ -496,7 +496,7 @@ def register():
                     # is what makes the connection die before the text arrives
                     return h3s_llm.collect_chat(messages, temperature=float(b.get("temperature") or 0.6),
                                                 # thinking-модели тратят токены и на размышления, поэтому потолок выше
-                                                max_tokens=min(8000, int(b.get("max_tokens") or 6000)),
+                                                max_tokens=min(32000, int(b.get("max_tokens") or 16000)),
                                                 api_base_url=str(b.get("api_base") or ""),
                                                 api_key=str(b.get("api_key") or ""),
                                                 api_model=str(b.get("api_model") or ""),
@@ -506,6 +506,8 @@ def register():
             return series.write_series(plan, fetch=fetch, style=str(b.get("style") or ""),
                                        refs=list(b.get("refs") or []), language=str(b.get("language") or "ru"),
                                        extra=str(b.get("extra") or ""), sound=str(b.get("sound") or ""),
+                                       # предыдущий отрезок уже написан: он и есть контекст продолжения
+                                       previous_prompt=str(b.get("previous_prompt") or ""),
                                        allow_fallback=b.get("allow_fallback", True),
                                        only=int(only) if only is not None else None)
         return await _json_call(work)

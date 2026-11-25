@@ -87,53 +87,67 @@ def plan_beats(idea, seconds, w=1344, h=768, budget=None, overlap_blocks=1, beat
             "over_budget": [b["index"] for b in beats_out if b["tokens"] > budget]}
 
 
-CONTRACT = """Ты — писатель промтов для MiniMax H3. Пишешь серию отрезков ОДНОГО непрерывного кадра: каждый
-следующий отрезок продолжает предыдущий, и готовый ролик должен играть как один план без видимого стыка.
-Основа правил — «MiniMax H3 Long Take (Motion Context)» (forge_data/styles/minimax_h3_long_take.json).
+CONTRACT = """You write English MiniMax H3 REF2VA prompts for a chain of segments that must play as ONE
+unbroken shot: every segment continues the one before it, and the finished film must show no visible join.
+The rules are the pack's own Long Take writer skill (forge_data/styles/minimax_h3_long_take.json).
 
-Верни СТРОГО JSON без пояснений:
-{"title": "...", "logline": "...", "segments": [{"prompt": "...", "note": "..."}, ...]}
-Ровно {count} элементов в segments, в том же порядке, что отрезки ниже.
+{answer}
 
-Формат промта каждого отрезка — шесть секций H3 Ref2VA по порядку:
-subject_definitions:   <Subject 1> — кто в кадре и откуда берётся внешность.
-summary:               [reference generation] один абзац: что происходит за отрезок и чем он кончается.
-retention_analysis:    строка на каждый ярлык, у которого есть роль.
-detailed_description:  описание кадра; начинается со строки [Shot 1], дальше действие по времени.
-overall_soundscape:    только звук сцены.
-non_diegetic_music:    N/A, если музыки нет.
-ВЕСЬ текст промта — только по-английски, включая описания: идея может быть задана по-русски, переведи её сам.
+Every segment prompt has exactly these six sections, in this order:
+subject_definitions:   <Subject 1> - who is in the shot and where their appearance comes from.
+summary:               [reference generation] one paragraph: what happens in this segment and how it ends.
+retention_analysis:    one line per label that has a role.
+detailed_description:  the shot; it starts with a [Shot 1] line, then the action over time.
+overall_soundscape:    diegetic sound only.
+non_diegetic_music:    N/A when there is none.
+Write the whole prompt in English: the idea may be given in another language, translate it yourself.
 
-Правила цепочки (стык держится на последних кадрах предыдущего отрезка, поэтому такие):
-1. Промт описывает ТОЛЬКО свой отрезок ({seconds} с, {new_frames} кадров). Не пересказывай предыдущие.
-2. Отрезков {count}. Связь этого отрезка: {link_hint}.
-3. Стык попадает на скучное место — середина шага, подъёма, движения: там единственный возможный следующий
-   кадр — «продолжай». Никогда не стыкуй на двери, пороге, прибытии, присаживании и середине фразы.
-4. Целый переход живёт внутри одного отрезка: дойти, открыть, шагнуть — всё в одном отрезке.
-5. Место назначения показывай раньше, чем персонаж туда идёт; на дорогу давай реальное экранное время.
-6. Кадрирование зафиксировано на весь ролик; плавный проезд камеры (push-in, pull-out, tilt) через стык не переноси.
-7. 2–3 события на 10 секунд. Что-то обязано развиваться — свет, погода, что открывает луч фонаря: одинаковые
-   декорации читаются как копипаста. Не пиши POV от первого лица, если в кадре человек.
-8. Никогда не используй слово cut ни в каком виде, даже «no cut»: монтажных склеек в промте H3 нет.
-9. В detailed_description ровно одна строка [Shot 1]; время отсчитывается от начала отрезка с 00:00.000. В
-   продолжающем отрезке пиши метки раньше на 0.92 с (первые ~22 кадра берутся из предыдущего отрезка и при сборке
-   вырезаются): событие на T секунде пиши как T + 0.92.
-10. Последняя строка каждого отрезка, кроме последнего, говорит, что персонаж всё ещё делает, когда отрезок
-    кончается: из этого состояния следующий отрезок и продолжается.
-11. Продолжающий отрезок открывается блоком продолжения — первые ~3 секунды, ноль новых предметов и декораций,
-    только продолжение: кадр уже идёт, камера держит ту же позицию, высоту и дистанцию, персонаж движется тем же
-    темпом в том же пространстве, свет тот же, ничто новое не входит в кадр. Закончи блок отрицаниями того, что
-    случится позже в этом отрезке. Дай персонажу мелкое действие (вдох, перемена веса): застывший кадр замерзает.
-12. Стиль, персонажи, локация и свет описываются одинаково во всех отрезках; меняется только действие.
-13. Речь: короткие реплики, 7–9 слов, примерно одна на 2.5 секунды, формат
-    At 00:04.700: [speaking, Russian, <голос>] "Stairs. Let's go up.", а точные слова — на языке речи внутри
-    <d>[Русский] Что дальше?</d>. Один говорящий (S1). Нет речи — не упоминай речь вовсе.
-14. Звук: overall_soundscape — только звук сцены. Музыка — non_diegetic_music: N/A, кроме случая, когда музыка
-    прямо нужна по идее.
+Chain rules (this segment is joined to the previous one through its last frames, which is why they exist):
+1. Describe ONLY your own segment ({seconds} s, {new_frames} frames). Never retell the earlier parts.
+2. Segments in the series: {count}. This segment's link: {link_hint}.
+3. The join lands on a boring mid-action moment (mid-step, mid-climb, mid-stroke): the only possible next frame
+   there is "keep going". Never join on a door, a threshold, an arrival, sitting down or the middle of a sentence.
+4. A whole transition lives inside one segment: reaching it, opening it and stepping through all happen there.
+5. Show the destination before travelling to it, and give the travel real screen time.
+6. Lock the framing for the whole film; never carry a smooth camera move (push-in, pull-out, tilt) across a join.
+7. 2-3 beats per 10 seconds. Something must keep developing - light, weather, what a beam reveals: identical
+   scenery reads as copy-paste. No first-person POV when a person is in the shot.
+8. Never use the word cut in any form, not even "no cut": an H3 prompt has no edit cuts.
+9. Exactly one [Shot 1] line. Timestamps are local to the segment and start at 00:00.000. In a continuing
+   segment write them 0.92 s earlier (its first ~22 frames come from the previous segment and are trimmed on
+   assembly): a beat meant for T seconds goes at T + 0.92.
+10. The last line of every segment except the final one states what the subject is still doing when it ends.
+11. A continuing segment opens with a continuation block covering the first ~3 seconds: ZERO new scenery nouns,
+    only continuation - the video opens already in progress, the camera holds exactly the position, height and
+    distance it already has, the subject keeps moving at exactly the same pace in the space they are already in,
+    the light on them unchanged, nothing new enters the frame. End the block with negations of what happens later
+    in this segment, and give the performer a small action (a breath, a weight shift): a frozen frame freezes.
+12. Style, subjects, location and light are written identically in every segment; only the action changes.
+13. Speech: short lines of 7-9 words, about one every 2.5 s, formatted
+    At 00:04.700: [speaking, Russian, <voice>] "Stairs. Let's go up." with the exact words of the spoken
+    language inside <d>[Russian] What is next?</d>. One speaker (S1). Without speech, never mention speech.
+14. Sound: overall_soundscape is diegetic only. Music: non_diegetic_music: N/A unless the idea needs music.
 """
 
 
-def writer_messages(idea, plan, style="", refs=(), language="ru", extra="", only=None):
+ANSWER_JSON = ('Answer with STRICT JSON and nothing else: {"title": "...", "logline": "...", "segments": '
+               '[{"prompt": "...", "note": "..."}, ...]}\n'
+               'Exactly {count} items in segments, in the same order as the segments below.')
+
+ANSWER_TEXT = ("Answer with the FINISHED PROMPT ONLY, as plain text: no JSON, no Markdown fences, no preface, "
+               "no commentary - just the prompt exactly as it would be pasted into this segment's prompt field.\n"
+               "Use exactly this skeleton, in this order, fill every section and keep the section names:\n"
+               "subject_definitions:\n<Subject 1> is ...\n"
+               "summary:\n[reference generation] ...\n"
+               "retention_analysis:   <Subject 1> (appears in [Shot 1]): fully_preserved - ...   "
+               "(include this section and line only when this segment really has reference labels, "
+               "otherwise omit the section entirely)\n"
+               "detailed_description:\n[Shot 1] ...\n"
+               "overall_soundscape:\n...\n"
+               "non_diegetic_music:\nN/A")
+
+
+def writer_messages(idea, plan, style="", refs=(), language="ru", extra="", only=None, previous_prompt=""):
     """Задание писателю: идея + посчитанные отрезки + наш контракт формата.
 
     `only` — писать промт одного отрезка (индекс): так длинная серия не зависит от одного длинного ответа,
@@ -156,16 +170,30 @@ def writer_messages(idea, plan, style="", refs=(), language="ru", extra="", only
     if extra:
         lines.append(f"Дополнительно: {extra}")
     # no str.format here: the contract itself shows a JSON object, so its braces are not placeholders
-    head = (CONTRACT.replace("{count}", "1" if only is not None else str(len(beats)))
+    head = (CONTRACT.replace("{answer}", ANSWER_TEXT if only is not None else ANSWER_JSON)
+            .replace("{count}", "1" if only is not None else str(len(beats)))
             .replace("{seconds}", f"{beats[only]['seconds']:.1f}" if only is not None
                      else " / ".join(f"{b['seconds']:.1f}" for b in beats))
             .replace("{new_frames}", str(beats[only]["new_frames"]) if only is not None
                      else " / ".join(str(b["new_frames"]) for b in beats))
             .replace("{link_hint}", "продолжение" if len(beats) > 1 else "начало"))
     if only is not None:
-        head += (f"\n\nПиши ТОЛЬКО отрезок {only + 1} из {len(beats)}: верни ровно 1 элемент в segments. "
-                 f"Остальные отрезки серии уже написаны или будут написаны отдельно.")
-        lines = [f"Это отрезок {only + 1} из {len(beats)}."] + lines
+        head += f"\n\nWrite SEGMENT {only + 1} of {len(beats)} ONLY."
+        slices = _idea_beats(plan["idea"] or idea, len(beats))
+        mine = slices[only]
+        lines = [f"This is segment {only + 1} of {len(beats)}.", f"Your part of the idea (this one only): {mine}"]
+        if only + 1 < len(slices):
+            lines.append(f"Next part of the idea - hand the action over to it at the end, do not play its events "
+                         f"now: {slices[only + 1]}")
+        if previous_prompt:
+            lines.append("Previous segment's prompt - FOR CONTINUITY ONLY: keep its framing, light and appearance, "
+                         "continue its action, do not start a new scene, and do not describe a new beginning, a "
+                         "repeat of the first action or a hard reset of camera and sound.")
+            lines.append(previous_prompt)
+        else:
+            lines.append("This is the OPENING segment: it opens the film. Never write that the shot continues or "
+                         "resumes, and do not jump ahead to later events.")
+        lines += [f"Whole series for context only (do not write it): {plan['idea'] or idea}"]
     return [{"role": "system", "content": head},
             {"role": "user", "content": "\n".join(lines)}]
 
@@ -264,6 +292,17 @@ def _objects(text):
     return out
 
 
+# закрывающий тег бывает и без «>» (модель обрывает его) — отсюда \s*>* 
+THINK_RE = re.compile(r"<think\b[^>]*>.*?</think\s*>*|```think.*?```", re.I | re.S)
+
+
+def strip_thinking(text):
+    """Убрать блок размышлений и служебную обвязку вокруг промта (приём LongForge: модель кладёт ответ в think)."""
+    out = THINK_RE.sub("", str(text or ""))
+    out = re.sub(r"^\s*(?:вот|here(?:'s| is)|ок|okay)[^\n]{0,80}:\s*", "", out, flags=re.I)
+    return out.strip()
+
+
 def _json_block(text):
     """Достать JSON из ответа модели: чистый, в ```-блоке или в окружении текста.
 
@@ -283,7 +322,7 @@ def _json_block(text):
             return json.loads(candidate)
         except ValueError:
             continue
-    raise ValueError("Писатель вернул не JSON — нужен объект с segments")
+    return None      # не JSON: решение принимает parse_answer (ответ текстом годится для одного отрезка)
 
 
 def parse_answer(text, plan, expect=None, index=None, continuation=False):
@@ -291,10 +330,15 @@ def parse_answer(text, plan, expect=None, index=None, continuation=False):
 
     `expect` — сколько элементов ждём (по умолчанию все отрезки), `index` — чей это промт, когда пишут по одному.
     """
-    data = _json_block(text)
+    data = _json_block(strip_thinking(text))
     segs = data.get("segments") if isinstance(data, dict) else data
     if not isinstance(segs, list):
-        raise ValueError("Писатель вернул не JSON — нужен объект с segments")
+        if index is not None:
+            # пишем один отрезок: годится и ответ готовым текстом — JSON тут не обязателен
+            plain = re.sub(r"```[a-zA-Z]*", "", strip_thinking(text)).strip().strip("`").strip()
+            segs = [{"prompt": plain, "note": ""}] if plain else []
+        if not isinstance(segs, list) or not segs:
+            raise ValueError("Писатель вернул не JSON — нужен объект с segments")
     want = int(expect if expect is not None else len(plan["beats"]))
     if len(segs) != want:
         raise ValueError(f"Писатель вернул {len(segs)} отрезков вместо {want}")
@@ -491,14 +535,14 @@ def fallback_prompts(plan, style="", sound="", voice="", refs=()):
 
 
 def write_series(plan, fetch=None, style="", refs=(), language="ru", extra="", sound="", allow_fallback=True,
-                 only=None):
+                 only=None, previous_prompt=""):
     """Промты для серии: писателем (если он есть) или шаблоном; при сбое писателя — шаблон и причина.
 
     `fetch(messages) -> текст ответа` — любая функция вызова модели, поэтому логика проверяется без LLM.
     `only` — писать промт одного отрезка: длинная серия не зависит от одного длинного ответа.
     """
     messages = writer_messages(plan["idea"], plan, style=style, refs=refs, language=language, extra=extra,
-                               only=only)
+                               only=only, previous_prompt=previous_prompt)
 
     def template(index=None):
         full = fallback_prompts(plan, style=style, sound=sound, refs=refs)

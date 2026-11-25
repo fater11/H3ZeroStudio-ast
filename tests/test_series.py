@@ -75,8 +75,9 @@ def test_writer_messages_carry_the_idea_the_beats_and_the_contract():
                              refs=["photo of the woman"], language="ru", extra="Тишина, без музыки")
     assert [m["role"] for m in msgs] == ["system", "user"]
     sys_text, user = msgs[0]["content"], msgs[1]["content"]
-    assert '"segments"' in sys_text and "Ровно 3 элементов" in sys_text
-    assert "[Shot 1]" in sys_text and "non_diegetic_music" in sys_text and "part" not in sys_text
+    assert '"segments"' in sys_text and "Exactly 3 items" in sys_text
+    assert "[Shot 1]" in sys_text and "non_diegetic_music" in sys_text
+    assert "part 1 of" not in sys_text and "part 2 of" not in sys_text      # без служебной нумерации частей
     assert "радиоприёмник" in user and "Warm documentary look." in user and "photo of the woman" in user
     assert user.count("с (") == 3 and "роль:" in user and "связь:" in user
 
@@ -176,8 +177,8 @@ def test_writing_one_segment_at_a_time():
         got = S.write_series(plan, fetch=fetch, only=k)
         assert got["used"] == "llm" and len(got["written"]["segments"]) == 1
         assert got["written"]["segments"][0]["index"] == k
-        assert f"отрезок {k + 1} из 3" in asked[-1]                      # the writer is told which one
-        assert got["messages"][0]["content"].count("Ровно 1 элемент") == 1
+        assert f"This is segment {k + 1} of 3." in asked[-1]               # the writer is told which one
+        assert f"Write SEGMENT {k + 1} of 3 ONLY" in got["messages"][0]["content"]
     assert len(asked) == 3 and len(set(asked)) == 3
 
     def broken(_messages):
@@ -374,11 +375,12 @@ def test_the_writer_brief_carries_the_chain_rules():
     """Контракт писателя — из скилла Long Take: продолжение отрезка, стык на скучном месте, +0.92 с, без слова cut."""
     plan = S.plan_beats("A restorer rebuilds an old clock", 30, w=960, h=544, budget=200_000, beats=2)
     contract = S.CONTRACT
-    assert "блоком продолжения" in contract and "0.92" in contract
-    assert "cut" in contract and "стык" in contract.lower()
-    assert "2–3 события на 10 секунд" in contract and "[Shot 1]" in contract
+    assert "continuation block" in contract and "0.92" in contract
+    assert "cut" in contract and "join" in contract.lower()
+    assert "2-3 beats per 10 seconds" in contract and "[Shot 1]" in contract
+    assert "English" in contract
     msgs = S.writer_messages("Anything", plan, only=1)
-    assert "Ровно 1 элемент" in msgs[0]["content"]
+    assert "Write SEGMENT 2 of 2 ONLY" in msgs[0]["content"]
 
 
 def test_a_continuation_prompt_needs_the_continuation_block():
@@ -400,3 +402,56 @@ def test_a_continuation_prompt_needs_the_continuation_block():
     assert S.check_prompt_rules(good, continuation=True) == []
     with_cut = good.replace("Quiet room tone", "Quiet room tone, no cut away from her")
     assert any("(правило 8)" in b for b in S.check_prompt_rules(with_cut, continuation=True))
+
+
+def test_one_segment_can_come_as_plain_text_with_the_previous_prompt():
+    """Один отрезок пишется текстом (JSON тут ломает дешёвые модели), и видит промт предыдущего отрезка."""
+    plan = S.plan_beats("A restorer rebuilds an old clock; she hangs it back and winds it.", 30,
+                        w=960, h=544, budget=200_000, beats=2)
+    seen = {}
+
+    def fetch(messages):
+        seen["user"] = messages[1]["content"]
+        return good_prompt("She finishes brushing the movement and closes the case.")
+
+    got = S.write_series(plan, fetch=fetch, only=1, previous_prompt=good_prompt("She starts brushing."))
+    assert got["used"] == "llm" and "She finishes brushing" in got["written"]["segments"][0]["prompt"]
+    assert "FINISHED PROMPT ONLY" in got["messages"][0]["content"]
+    assert "She starts brushing." in seen["user"] and "FOR CONTINUITY ONLY" in seen["user"]   # контекст продолжения
+    assert "hangs it back" in seen["user"] or "rebuilds an old clock" in seen["user"]   # своя часть идеи
+    # ответ текстом соблюдает правила — принимается; на русском — нет
+    russian = S.write_series(plan, fetch=lambda m: "она заканчивает чистить механизм", only=1)
+    assert russian["used"] == "template"
+
+
+def test_the_brief_asks_for_a_slice_not_the_whole_idea():
+    """Часть идеи отрезка идёт писателю как его задание: вся идея — только для контекста."""
+    plan = S.plan_beats("One. Two. Three.", 30, w=960, h=544, budget=200_000, beats=3)
+    msg = S.writer_messages("One. Two. Three.", plan, only=2)["1"] if False else S.writer_messages(
+        "One. Two. Three.", plan, only=2)[1]["content"]
+    assert "Your part of the idea (this one only): Three." in msg
+    assert msg.index("Your part of the idea") < msg.index("Whole series for context only")
+
+
+def test_a_thinking_answer_is_unwrapped():
+    """Приём LongForge: thinking-модель отдаёт ответ в <think…>, и он не должен теряться."""
+    plan = S.plan_beats("A restorer rebuilds an old clock; she hangs it back and winds it.", 30,
+                        w=960, h=544, budget=200_000, beats=2)
+    wrapped = ("<think" + ">" + "Надо взять промт прошлого отрезка и продолжить." + "</think" + ">" + "\n\n"
+               + good_prompt("She closes the case and winds the clock."))
+    assert S.strip_thinking(wrapped).startswith("subject_definitions:")
+    got = S.write_series(plan, fetch=lambda m: wrapped, only=1,
+                         previous_prompt=good_prompt("She starts brushing."))
+    assert got["used"] == "llm" and "winds the clock" in got["written"]["segments"][0]["prompt"]
+    assert "Надо взять" not in got["written"]["segments"][0]["prompt"]
+
+
+def test_the_brief_asks_for_the_next_beat_handoff():
+    """Следующая часть идеи идёт в задание, чтобы отрезок передал ей эстафету, а не закрыл сюжет."""
+    plan = S.plan_beats("One. Two. Three.", 30, w=960, h=544, budget=200_000, beats=3)
+    msg = S.writer_messages("One. Two. Three.", plan, only=1)[1]["content"]
+    assert "Next part of the idea" in msg and "Two." in msg
+    first = S.writer_messages("One. Two. Three.", plan, only=0)[1]["content"]
+    assert "OPENING segment" in first and "Next part of the idea" in first
+    last = S.writer_messages("One. Two. Three.", plan, only=2)[1]["content"]
+    assert "Next part of the idea" not in last
