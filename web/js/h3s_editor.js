@@ -32,6 +32,7 @@ import { installChars } from "./h3s_chars.js";
 import { installAssist } from "./h3s_assist.js";
 import { installMonitor } from "./h3s_monitor.js";
 import { installSwapAccess } from "./h3s_swap_access.js";
+import { installTvStudio } from "./h3s_tv_studio.js";
 import { T, plural, tServer } from "./h3s_i18n.js";
 
 // LAB: restrained, desaturated clip palette (same 8 slots, so projects keep their colour index)
@@ -553,10 +554,10 @@ export class H3Editor {
   renderTools() {
     const t = this.$.tools; t.innerHTML = "";
     if (this.tool === "audio") this.tool = "assets";
-    const tool = (id, icon, label) => h("div", { class: "h3l-tool" + (this.tool === id ? " on" : ""), title: id === "swap" ? T("Эксперимент: замена персонажа на видео") : label, html: icon + `<span>${label}</span>`, onclick: () => { if (id === "swap") return this.openSwapWorkspace(); if (this.tool === "swap") this.closeSwapWorkspace(false); if (id === "assist") this.openAssist(); else { if (id === "settings" && this.tool !== "settings") this._preSetTool = this.tool; this.tool = id; this.renderTools(); this.renderLeft(); } } });
+    const tool = (id, icon, label) => h("div", { class: "h3l-tool" + (this.tool === id ? " on" : ""), title: id === "swap" ? T("Эксперимент: замена персонажа на видео") : label, html: icon + `<span>${label}</span>`, onclick: () => { if (id === "swap") return this.openSwapWorkspace(); if (id === "tv") return this.openTvStudio(); if (this.tool === "swap") this.closeSwapWorkspace(false); if (id === "assist") this.openAssist(); else { if (id === "settings" && this.tool !== "settings") this._preSetTool = this.tool; this.tool = id; this.renderTools(); this.renderLeft(); } } });
     const social = (href, icon, label) => h("a", { class: "h3l-social-link", href, target: "_blank", rel: "noopener noreferrer", title: label, "aria-label": label, html: icon });
     t.append(tool("assets", ICON.assets, T("Ассеты")), tool("chars", ICON.chars, T("Персоны")), tool("swap", ICON.swap, T("Замена")), tool("gallery", ICON.gallery, T("Галерея")), tool("projects", ICON.projects, T("Проекты")), tool("models", ICON.models, T("Модели")), tool("settings", ICON.settings, T("Настройки")), tool("keys", ICON.keys, T("Клавиши")),
-      tool("assist", ICON.spark, T("Ассистент")),
+      tool("assist", ICON.spark, T("Ассистент")), tool("tv", ICON.spark, T("AI TV")),
       h("div", { class: "sp" }),
       tool("help", ICON.help, T("Справка")), tool("about", ICON.info, T("Инфо")));
   }
@@ -2447,5 +2448,6 @@ installGaps(H3Editor, { C, h, ICON });
 installTimer(H3Editor, { C, h });
 installChars(H3Editor, { C, h, ICON });
 installSwapAccess(H3Editor, { C, h, ICON });
+installTvStudio(H3Editor, { C, h, ICON });
 installAssist(H3Editor, { C, h, ICON });
 installMonitor(H3Editor, { C, h });

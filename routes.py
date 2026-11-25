@@ -330,6 +330,91 @@ def register():
         from . import h3s_gen
         return await _json_call(h3s_gen.runs_state)
 
+    # ---------------------------------------------------------------- AI TV Studio
+    @routes.get("/h3lab/tv/state")
+    async def tv_state(request):
+        from . import h3s_tv as tv
+        return await _json_call(lambda: {"brands": tv.brands(), "orders": tv.orders(),
+                                         "pace": sorted(tv.PACE), "trained": list(tv.TRAINED)})
+
+    @routes.post("/h3lab/tv/brand/save")
+    async def tv_brand_save(request):
+        from . import h3s_tv as tv
+        b = await request.json()
+        return await _json_call(tv.brand_save, b.get("brand") or {})
+
+    @routes.post("/h3lab/tv/brand/delete")
+    async def tv_brand_delete(request):
+        from . import h3s_tv as tv
+        b = await request.json()
+        return await _json_call(tv.brand_delete, b.get("id") or "")
+
+    @routes.post("/h3lab/tv/order/create")
+    async def tv_order_create(request):
+        from . import h3s_tv as tv
+        b = await request.json()
+        return await _json_call(tv.order_create, b.get("name") or "", b.get("brand") or "",
+                                b.get("minutes") or 3, b.get("pace") or "medium",
+                                b.get("cast") or [], b.get("prompt_prefix") or "")
+
+    @routes.post("/h3lab/tv/order/run")
+    async def tv_order_run(request):
+        from . import h3s_tv as tv
+        b = await request.json()
+        return await _json_call(tv.order_run, b.get("id") or "", b.get("limit"))
+
+    @routes.get("/h3lab/tv/order")
+    async def tv_order_get(request):
+        from . import h3s_tv as tv
+        oid = request.rel_url.query.get("id", "")
+        return await _json_call(lambda: {"order": tv.order_get(oid), "status": tv.status(tv.order_get(oid) or {})})
+
+    @routes.post("/h3lab/tv/order/delete")
+    async def tv_order_delete(request):
+        from . import h3s_tv as tv
+        b = await request.json()
+        return await _json_call(tv.order_delete, b.get("id") or "")
+
+    @routes.post("/h3lab/tv/order/dupes")
+    async def tv_order_dupes(request):
+        from . import h3s_tv as tv
+        b = await request.json()
+
+        def work():
+            order = tv.order_get(b.get("id") or "")
+            files = [f for f in tv.scene_media(order or {}) if f and os.path.isfile(f)]
+            return tv.dupes(files, int(b.get("threshold") or 6))
+        return await _json_call(work)
+
+    @routes.post("/h3lab/tv/overlay")
+    async def tv_overlay(request):
+        from . import h3s_tv as tv
+        b = await request.json()
+        out = os.path.join(tv.root(), "export", (b.get("out") or "overlay") + ".mp4")
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        return await _json_call(tv.overlay_export, b.get("video") or "", out, b.get("brand") or {},
+                                b.get("logo") or "", b.get("seconds"))
+
+    @routes.post("/h3lab/tv/loop")
+    async def tv_loop(request):
+        from . import h3s_tv as tv
+        b = await request.json()
+        out = os.path.join(tv.root(), "export", (b.get("out") or "loop") + ".mp4")
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        return await _json_call(tv.loop_export, b.get("video") or "", out, float(b.get("crossfade") or 0.4))
+
+    @routes.post("/h3lab/tv/playlist")
+    async def tv_playlist(request):
+        from . import h3s_tv as tv
+        b = await request.json()
+
+        def work():
+            files = [f for f in tv.scene_media(tv.order_get(b.get("id") or "") or {}) if f]
+            out = os.path.join(tv.root(), "export", (b.get("out") or "playlist") + ".mp4")
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+            return tv.playlist_export(files, out)
+        return await _json_call(work)
+
     @routes.get("/h3lab/status")
     async def status(request):
         try:

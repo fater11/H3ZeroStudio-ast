@@ -4226,6 +4226,9 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         if out_audio is not None:
             out_audio = {"waveform": out_audio["waveform"][..., :int(round(end / fps * out_audio["sample_rate"]))],
                          "sample_rate": out_audio["sample_rate"]}
+    if (proj.get("run") or {}).get("no_audio"):
+        log("export: run.no_audio — the MP4 is written without an audio track")
+        out_audio = None
     # Export codec does not affect any cached H3 latents, takes or colour frames.
     export_encoder = (proj.get("run") or {}).get("export_encoder") or "cpu"
     if export_encoder not in ("cpu", "nvenc"):
@@ -4254,6 +4257,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                                 + (f"|studio-colour-v3:{studio_cache_prev or 'uncached'}" if studio_mode else "")
                                + "".join(f"|R{r['key']}" + (f"^{r['up']['key']}" if r.get("up") else "") for r in reg_results)
                                 + ("|ffmpeg-h264-nvenc-p4-v1" if export_encoder == "nvenc" else "")
+                                + ("|noaudio-v1" if (proj.get("run") or {}).get("no_audio") else "")
                                 + ("|ffconcat-v1" if concat_eligible else "")).encode()).hexdigest()[:16]
     full_name = f"full_{full_key}.mp4"
     full_path = os.path.join(d, full_name)

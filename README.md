@@ -40,6 +40,11 @@
 
 ### 🆕 Что нового
 
+- Режимы **pi-H3 DWD** (2 и 4 шага) для pruned-моделей; проверка pruned-раскладки больше не блокирует запуск.
+- **Ускорение**: VEDA Sparse Attention, блочно-разреженное внимание, TeaCache, `torch.compile`.
+- **Замена персонажа на футаже** через SAM 3.1: чистка маски (дыры, расширение, растушёвка, временное объединение со сбросом на склейках) и промпт-swap.
+- [Сравнение восьми pruned-моделей H3](https://huggingface.co/spaces/smartfon/h3-pi-model-benchmark) на одном промпте и seed.
+
 ![Обновления: LLM-ассистент, мониторинг ресурсов, упрощённая правая панель, пресеты ассистента](docs/images/update_1.webp)
 
 ![Обновления: сворачиваемые панели, таймер генераций с историей, автономная работа ноды](docs/images/update_2.webp)
@@ -75,6 +80,9 @@
 - 🎭 **Дубли (takes).**
   - До 12 вариантов на отрезок. Выбранный дубль идёт в склейку и в продолжение.
   - Изменившиеся зависимые отрезки помечаются «изменён».
+- 🧪 **pi-H3 DWD — 2 или 4 шага.** Отдельные режимы для pruned-моделей: адаптер `pi_h3_<n>step_dwd_adapter_int8_convrot`, расписание pi-Flow и декодер DWD вместо видео-VAE. Проверка pruned-раскладки только предупреждает в логе и не блокирует запуск.
+- ⚡ **Ускорение.** Возврат внимания (Kitchen / Sage / Flash), VEDA Sparse Attention для H3 с предиктором из `models/veda`, блочно-разреженное внимание (VSA), TeaCache и `torch.compile` — по отдельности и вместе, с откатом на dense при ошибке.
+- 🕺 **Замена персонажа на футаже (своп).** Встроенные SAM 3.1 (`sam3.1_multiplex_fp16.safetensors`) трекают человека по кадрам, маска чистится (заливка дыр, расширение, растушёвка, временное объединение с учётом монтажных склеек), фон остаётся исходным; промпт описывает, кто меняется и что сохраняется.
 - 🎵 **Звук.**
   - Дорожка **«Аудио»** фиксирует звук: видео подстраивается под ритм и липсинк.
   - Дорожка **«Музыка»** — фон, который подмешивается в итог.
@@ -128,11 +136,16 @@ git clone https://github.com/fater11/H3ZeroStudio-ast
 | MiniMax H3 (модель, текстовый энкодер, video VAE, audio VAE) | штатные файлы H3 для ComfyUI | `models/diffusion_models`, `models/text_encoders`, `models/vae` | **обязательно** (без audio VAE — только видео) |
 | Обученный латентный апскейлер H3 | `minimax_h3_latent_upscaler_3d_bf16.safetensors` ([HF](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler)) | `models/latent_upscale_models` | для 2 этапов и апскейла (метод по умолчанию) |
 | ↳ нода апскейлера | [Comfyui_Minimax_h3_latent_Upscaler](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler) (нода `MinimaxH3LatentUpscaler3D`) | `custom_nodes` | вместе с моделью |
+| Адаптеры pi-H3 DWD | `pi_h3_2step_dwd_adapter_int8_convrot.safetensors`, `pi_h3_4step_dwd_adapter_int8_convrot.safetensors` ([LakonLab](https://huggingface.co/LakonLab)) | `models/loras` | для режимов pi-H3 |
+| Предиктор VEDA | например `minimax_h3_r2va_veda_preview_fp8.safetensors` | `models/veda` | для ускорения VEDA |
+| Маска свопа (SAM 3.1) | `sam3.1_multiplex_fp16.safetensors` + встроенные SAM3-ноды ComfyUI | `models/checkpoints` | для замены персонажа на футаже |
 | Tiny VAE для превью | `taeh3.safetensors` ([madebyollin/taehv](https://github.com/madebyollin/taehv/tree/main/safetensors)) | `models/vae_approx` | опционально: без него превью грубое (latent → RGB) |
 
 Папки ищутся стандартно через `folder_paths`, поэтому пути из `extra_model_paths.yaml` тоже работают. Что найдено, видно в редакторе: **«Настройки» → «Модели»**.
 
 Если для чистовика или апскейла нет обученного апскейлера, генерация остановится до сэмплинга с понятной ошибкой.
+
+**Сравнение моделей:** готовые 10-секундные клипы восьми pruned-моделей H3 (2 и 4 шага pi-H3) на одном промпте и seed — на [Hugging Face Space](https://huggingface.co/spaces/smartfon/h3-pi-model-benchmark); там же референс, промпты и голосование по критериям.
 
 ## 🚀 Как пользоваться
 
@@ -185,6 +198,7 @@ git clone https://github.com/fater11/H3ZeroStudio-ast
   1. Видео-латент выбранного черновика увеличивается обученным апскейлером H3.
   2. Короткий проход H3 стартует с **σ 0.40** (проверенный диапазон 0.25–0.45). Это доля шума, а не «denoise».
   3. **Звук черновика сохраняется 1:1** через маску звука H3, перекрытие фиксируется по доработанному предыдущему отрезку.
+- **pi-H3 · 2 шага** и **pi-H3 · 4 шага** — pi-Flow DWD: только pruned-модель из пресета, входы MODEL/SAMPLER/SIGMAS у ноды должны быть отключены, кадры декодирует DWD (видео-VAE остаётся для референсов, аудио-VAE — для звука). Только финальный проход, без черновика и апскейла.
 - **✎ Черновик / ✦ Чистовик / ↑ Финал из черновика** запускают один этап для одного клипа, не меняя режим проекта.
 - У «Основного прохода», «Этапа 1» и «Этапа 2» свои шаги, cfg, сэмплер, расписание и shift. Пустое поле означает «как в основном проходе».
 
@@ -388,6 +402,9 @@ The interface is available in Russian, English, Thai (ไทย) and Simplified 
 - **Upscale.** Per segment or the whole video: learned latent upscaler or or synchronized tiles (SyncTile). Footage used as is is upscaled too (VAE-encoded frames through the same mode; ), and so are ✂ spans (bridge / prologue / region takes, right click «↑ Апскейл участка»; cached with the take, seams level-locked after the upscale). The target size is set in megapixels. Long clips are processed in sequential temporal chunks (upscale + refine per chunk, overlaps continued like an extension, VRAM freed between chunks), which keeps a 12 GB GPU in budget.
 - **Regenerate a range.** The «✂ Участок» toolbar button selects a range in the middle of a clip (generated or footage). Only that range is re-sampled; the video and audio before and after it stay as clean context (H3's native per-modality temporal mask). The result is spliced back frame-exactly and sample-exactly, and each result is a take of the region.
 - **Audio.** "Аудио" lanes **lock** your audio, so the video follows its rhythm and lip-sync. The "Музыка" lane is a background music bed mixed into the output.
+- **pi-H3 DWD (2 or 4 steps).** Extra generation modes for pruned bases: `pi_h3_<n>step_dwd_adapter_int8_convrot`, a pi-Flow schedule and the DWD decoder instead of the video VAE. The pruned-layout check only warns in the log; it never blocks a run.
+- **Acceleration.** Attention backends (Kitchen / Sage / Flash), VEDA Sparse Attention for H3 fed by a predictor in `models/veda`, block-sparse attention (VSA), TeaCache and `torch.compile`, alone or stacked, with a dense fallback on failure.
+- **Character swap on footage.** Built-in SAM 3.1 (`sam3.1_multiplex_fp16.safetensors`) tracks the person per frame; the mask is cleaned (hole filling, expansion, feather, temporal union that resets on cuts) and the background stays untouched. The prompt names who changes and what is kept.
 - **Live preview.** Every step is decoded with `taeh3`, with audio, σ/Δ charts and a per-step log.
 - **Prompt editor.** «✎ Редактировать» on every prompt field opens a large CodeMirror 6 editor: `@` lists this prompt's references (with thumbnails) and inserts `<Picture N>` / `<Video N>` / `<Audio N>`; tokens are highlighted and dangling ones flagged; find/replace, undo/redo, wrap, line numbers, mono font, word/char/token counter; a side panel explains the recommended H3 prompt structure (subject_definitions … non_diegetic_music), counts detailed_description words against 350–500 and inserts a skeleton.
 - **Seams.** Every extend join is rated after generation (seamless / soft bump / hard cut, plus the loudness jump) on the timeline, clip card and gallery, with a hint to reroll. Hard audio cuts get a ~5 ms de-click taper; all MP4s are BT.709-tagged; a configurable VRAM headroom is kept free during runs (ideas after chanon/comfyui-obvpm-timeline, GPL-3.0). Level lock: brightness/contrast/colour at extend joins is matched on the decoded frames (both sides meet in the middle, smoothstep over a 12-frame window each side, configurable, shift capped at ±20/255) — latents, cache and takes stay as they are; the seam rating shows after vs before.
