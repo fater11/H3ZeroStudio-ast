@@ -145,10 +145,14 @@ export function installSeries(Editor, { C, h, ICON }) {
     // costs a single segment (that one falls back to the template writer) instead of the whole series.
     async srWriteOne(k, useLlm) {
       const st = this.srState, cfg = (this.p.assistant || {}).cfg || {};
+      // один отрезок — это короткий ответ: не просим у модели 32k, иначе ответ не успевает дойти,
+      // а стрим обрывается (так и появилось «Fetch timeout» на серии из девяти отрезков)
+      const cap = Math.max(1200, Math.min(6000, Number(cfg.max_tokens) || 6000));
       const body = { plan: st.plan, idea: st.idea, style: st.style, sound: st.sound, extra: st.extra,
                      only: k, use_llm: useLlm !== false, allow_fallback: false,
                      api_base: cfg.api_base, api_key: cfg.api_key, api_model: cfg.api_model,
-                     temperature: cfg.temperature, max_tokens: cfg.max_tokens };
+                     temperature: cfg.temperature, max_tokens: cap,
+                     stream_timeout: cfg.stream_timeout };
       const d = await this.host.call("/h3lab/series/write", body);
       const segs = (d.written && d.written.segments) || [];
       if (!segs.length) throw new Error(T("Отрезок {0} пришёл без промта", k + 1));

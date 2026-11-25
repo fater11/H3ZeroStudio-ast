@@ -492,12 +492,15 @@ def register():
             fetch = None
             if b.get("api_model") and b.get("use_llm", True):
                 def fetch(messages):
+                    # thinking off and a modest cap: a single segment prompt is short, and a long answer
+                    # is what makes the connection die before the text arrives
                     return h3s_llm.collect_chat(messages, temperature=float(b.get("temperature") or 0.6),
-                                                max_tokens=int(b.get("max_tokens") or 12000),
+                                                max_tokens=min(6000, int(b.get("max_tokens") or 4000)),
                                                 api_base_url=str(b.get("api_base") or ""),
                                                 api_key=str(b.get("api_key") or ""),
                                                 api_model=str(b.get("api_model") or ""),
-                                                thinking=False)
+                                                thinking=False,
+                                                stream_timeout=float(b.get("stream_timeout") or 600))
             only = b.get("only")
             return series.write_series(plan, fetch=fetch, style=str(b.get("style") or ""),
                                        refs=list(b.get("refs") or []), language=str(b.get("language") or "ru"),
