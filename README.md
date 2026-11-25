@@ -48,6 +48,7 @@
 - 🧵 **Серия из одной идеи:** задаёте идею и время ролика — пак делит его на связанные отрезки по бюджету токенов и пишет промты (моделью ассистента или шаблоном).
 - 🎭 **Каст и пакет ключевых кадров** + многочеловечная маска замены: несколько выбранных людей заменяются вместе, фон остаётся.
 - 🧮 **Бюджет токенов DiT:** отрезок, который не влезает в видеопамять, заранее виден в плане вместе с числом частей.
+- 🔗 **Якорь низкого разрешения:** на длинных цепочках каждое продолжение возвращается к первому отрезку своей сцены — картинка не уползает по яркости и тону (настройка 0…1).
 
 ![Обновления: LLM-ассистент, мониторинг ресурсов, упрощённая правая панель, пресеты ассистента](docs/images/update_1.webp)
 
@@ -234,6 +235,16 @@ git clone https://github.com/fater11/H3ZeroStudio-ast
 3. `GET /h3lab/drift/state?video=…` — короткая справка о файле (кадры, fps, размер, звук), чтобы понять, чем править.
 
 Границы правки ремастерские (±45 %, дальше видно как «мигание»), и кадр, уже выбитый в белое, не поднимается дополнительно. Если разница между сценами больше, чем позволяют границы, пак честно оставляет остаток — он виден в отчёте («до → после»). Кнопки в интерфейсе и автоматическое применение после сборки — в следующих обновлениях.
+
+## 🔗 Якорь низкого разрешения (длинные цепочки)
+
+Дрейф на 40+ отрезках рождается в самом продолжении: модель тянет свою же предыдущую картинку, а ошибка копится от отрезка к отрезку. Level lock правит только стыки, поэтому для длинных цепочек есть якорь.
+
+1. **Включите.** «Настройки» → раздел продления → **«Якорь низкого разрешения»**: ползунок 0…1. Рабочий диапазон 0.3–0.6; 0 — выключено, 1.0 — держит жёстко.
+2. **Что он делает.** После сэмплинга каждого продолжения латент (кроме зафиксированного перекрытия — оно остаётся байт в байт) подтягивается к **первому отрезку своей цепочки**: средние по каналам и по фазам 5-шаговой сетки, разброс и пространственная высокочастотная часть. Пять первых шагов входят плавно, чтобы стык не «шагнул». Исправленный латент идёт в кэш и в продолжение дальше — поэтому ошибка не накапливается.
+3. **Новая сцена — новый отсчёт.** «Новая сцена» (монтажная склейка) начинает свою цепочку: её вид не тянется к первому отрезку ролика. Именно поэтому якорь подходит для одной длинной сцены и для склеек, где вид должен меняться.
+4. **Где работает.** В режимах продолжения «PROTECTED» и «Оригинальный». В «Studio · цвет Lab» свой якорь первого клипа уже включён — эта настройка там не дублируется.
+5. **Проверить.** В логе на каждом продолжении видно `segment N: anchor to segment K (strength …)`, а рядом — «mean / std / hi_band» до и после. Если основание цепочки не найдено (латент не сохранён), пак честно пишет, что якорь пропущен, и продолжает без него.
 
 ## 🧮 Бюджет токенов
 
@@ -452,6 +463,7 @@ python -m pytest            # или COMFYUI_PATH=/путь/к/ComfyUI python -m
 - серию из одной идеи (точное покрытие времени, сетка и диапазон кадров, бюджет, контракт для писателя, разбор его ответа и шаблонный писатель);
 - бюджет токенов (стоимость холста и референсов, масштабирование по VRAM, разбиение на части, пересчёт меток времени по частям);
 - дрейф яркости и цвета (снятие медленной кривой с сохранением вспышек, выравнивание сцен к цели, честный отчёт о пределе правки, реальная запись выровненного файла);
+- якорь низкого разрешения (основание цепочки по связям, сила втягивания, нетронутое перекрытие, остановка накопления на 24 отрезках);
 - экран AI TV: сетку кадров и точную длину программы, бренды, порядок сцен, поиск повторов, оверлеи;
 - синтаксис JS, совпадение логики Python и JS, переводы интерфейса (ru → en/th/zh).
 
@@ -473,6 +485,7 @@ The interface is available in Russian, English, Thai (ไทย) and Simplified 
 - **Audio.** "Аудио" lanes **lock** your audio, so the video follows its rhythm and lip-sync. The "Музыка" lane is a background music bed mixed into the output.
 - **pi-H3 DWD (2 or 4 steps).** Extra generation modes for pruned bases: `pi_h3_<n>step_dwd_adapter_int8_convrot`, a pi-Flow schedule and the DWD decoder instead of the video VAE. The pruned-layout check only warns in the log; it never blocks a run.
 - **Acceleration.** Attention backends (Kitchen / Sage / Flash), VEDA Sparse Attention for H3 fed by a predictor in `models/veda`, block-sparse attention (VSA), TeaCache and `torch.compile`, alone or stacked, with a dense fallback on failure.
+- **Low-res anchor.** On long chains every extension's latent is pulled back to the first segment of its own scene (per-channel and per-5-step-phase means, spread, spatial high band; the locked overlap stays byte-for-byte, the first five steps ease in). A new scene starts its own chain, so a story whose look must change is fine. Works in the PROTECTED and Original continuation modes (Studio · Lab colour already anchors to clip 1); setting 0…1 in Settings.
 - **Ref Splice screen («Сборка»).** Cut the moves out of one reference video, reorder them in a plain-text script (`движение 4.0-6.0`, `переход 1.5: words`, `переход 1`), and the pack renders the spliced reference video (frames and sound in your order), writes one H3 prompt per shot with the reference retained only over the move windows, and queues the plan through AI TV — every shot gets its own cut of the splice as an ordinary video asset.
 - **Series screen («Серия»).** Give an idea and a running time; the pack splits it into connected segments on the DiT token budget (5+17n grid, trained range, continuation overlap) and writes the prompts — by the assistant model under a strict JSON contract, or by a template writer when no model is configured, so a series works offline. The result is a normal pack project.
 - **Cast, keyframes and multi-person swap.** Server side: person boxes are linked across frames, numbered by first appearance and left to right, keyframe moments are picked and a zip package asks for one H3 Image prompt per keyframe. The swap mask accepts several `seeds` — each person gets its own track, the stored mask is their union, and duplicates found again after a cut are dropped.

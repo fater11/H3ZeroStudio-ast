@@ -3255,4 +3255,10 @@ export default {
   "Проект сохранён: {0}": "Project saved: {0}",
   "Проект создан (не сохранён)": "Project created (not saved)",
   "Серия": "Series",
+
+  // Low-res anchor.
+  "Якорь низкого разрешения": "Low-res anchor",
+  "сила {0}": "strength {0}",
+  "выключен": "off",
+  "Возвращает латент каждого продолжения к первому отрезку цепочки: на длинных цепочках (40+ отрезков) картинка больше не уползает по яркости и тону. Новая сцена начинает свой отсчёт. 0 — выключено.": "Pulls every extension's latent back to the first segment of its chain: on long chains (40+ segments) the picture no longer drifts in brightness and tone. A new scene starts its own chain. 0 turns it off.",
 };

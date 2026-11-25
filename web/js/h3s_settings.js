@@ -959,6 +959,11 @@ export function installSettings(Editor, { C, h, ICON }) {
           pill(g.continuation_method === "protected", "protected", T("PROTECTED · латентный контекст"), () => { set("continuation_method", "protected"); set("lock_overlap", true); }),
           pill(g.continuation_method === "overlap", "overlap", T("Оригинальный"), () => set("continuation_method", "overlap")))),
         h("div", { class: "h3l-note" }, T("Studio выбран по умолчанию: на реальном стыке с человеком шаг люмы ×0.8–1.1 и дрейф тона вдвое меньше, чем у PROTECTED. PROTECTED и Оригинальный оставлены для старых проектов.")),
+        (() => { const r = h("input", { class: "h3l-range", type: "range", min: 0, max: 1, step: 0.05, value: g.anchor ?? 0 });
+          const v = h("div", { class: "h3l-val" }, Number(g.anchor ?? 0) > 0 ? T("сила {0}", Number(g.anchor).toFixed(2)) : T("выключен"));
+          r.oninput = () => { v.textContent = Number(r.value) > 0 ? T("сила {0}", Number(r.value).toFixed(2)) : T("выключен"); set("anchor", Number(r.value), { coalesce: "anchor", render: "none" }); };
+          return this.field(T("Якорь низкого разрешения"), h("div", { class: "h3l-row" }, r, v)); })(),
+        h("div", { class: "h3l-note" }, T("Возвращает латент каждого продолжения к первому отрезку цепочки: на длинных цепочках (40+ отрезков) картинка больше не уползает по яркости и тону. Новая сцена начинает свой отсчёт. 0 — выключено.")),
         this.toggle(T("Фиксировать перекрытие"), g.lock_overlap, (v) => set("lock_overlap", v), T("Кадры перекрытия берутся из готового предыдущего отрезка")),
         this.field(T("Видеорампа перехода (эксперимент)"), (() => {
           const sel = h("select", { class: "h3l-sel", title: T("Конец зафиксированного перекрытия постепенно размораживается: модель может пересобрать переход вместо жёсткой склейки") },

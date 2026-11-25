@@ -2131,6 +2131,18 @@ def project_dir(project):
     return d, sub.replace("\\", "/")
 
 
+def anchor_base_index(items, i):
+    """Номер отрезка, который держит текущую цепочку продлений: последний перед `i` со связью «новая сцена».
+
+    Якорь низкого разрешения возвращает латент продолжения к этому отрезку, поэтому ошибка не накапливается
+    на длинных цепочках, а новая сцена (монтажная склейка) начинает свой отсчёт и её вид остаётся её собственным.
+    """
+    for j in range(int(i) - 1, -1, -1):
+        if items[j].get("link") != "extend":
+            return j
+    return 0
+
+
 def seg_pt_path(d, key, frozen=False):
     """Latent file of a segment: cache/seg_<key>.pt, or frozen/seg_<key>.pt for a frozen one (falls back to the cache)."""
     if frozen:
@@ -3594,6 +3606,26 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                     v = studio.latent_anchor({"samples": v}, {"samples": anchor_v}, it["overlap"], i + 1)["samples"]
                 else:
                     log(f"segment {i + 1}: first-clip latent anchor unavailable (first take not cached)")
+            anchor_strength = float(s.get("anchor") or 0.0)
+            if anchor_strength > 0 and i > 0 and it["link"] == "extend" and it["overlap"] \
+                    and s.get("continuation_method") != "h3studio":
+                # Якорь низкого разрешения: латент продолжения возвращается к отрезку-основанию цепочки
+                # (не к предыдущему!). Без него ошибка копится сорок отрезков подряд и картинка уезжает.
+                from . import h3s_studio_color as studio
+                base_i = anchor_base_index(items, i)
+                base_v = None
+                if first <= base_i < first + len(seg_v):
+                    base_v = seg_v[base_i - first]
+                else:
+                    base_pt = seg_pt_path(d, keys[base_i], bool(frozen[base_i]) if base_i < len(frozen) else False)
+                    if usable_cache_file(base_pt, frozen=bool(frozen[base_i]) if base_i < len(frozen) else False):
+                        base_v = load_av_cache(base_pt)["v"]
+                if base_v is not None:
+                    v = studio.latent_anchor({"samples": v}, {"samples": base_v}, it["overlap"], i + 1,
+                                             strength=anchor_strength)["samples"]
+                    log(f"segment {i + 1}: anchor to segment {base_i + 1} (strength {anchor_strength:.2f})")
+                else:
+                    log(f"segment {i + 1}: anchor skipped — the base segment's latent is not available")
             checkpoint_t0 = time.perf_counter()
             atomic.save_torch({"v": v, "a": a}, pt)
             checkpoint_sec = time.perf_counter() - checkpoint_t0
