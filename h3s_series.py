@@ -221,6 +221,35 @@ def parse_answer(text, plan, expect=None, index=None):
             "segments": out}
 
 
+_BULLET_RE = re.compile(r"^\s*(?:[-*•–]|\d+[.)])\s*")
+_CJK_RE = re.compile(r"[\u3000-\u9fff\uac00-\ud7af]")          # иероглифы = размышления модели, не промт
+_META_HINTS = ("концепц", "промпт:", "промт:", "prompt:", "let me", "thinking", "вариант", "идея:",
+               "задание", "инструкц", "сегмент", "отрезок", "итог", "итак", "сначала", "нужно",
+               "此处", "因此", "首先", "总结", "构思", "根据", "用俄语")
+
+_STRICT_NOTE = ("Важно: ответь ТОЛЬКО JSON-объектом по контракту выше — без пояснений, списков, "
+                "размышлений и посторонних языков. Промт каждого отрезка — одна строка на русском.")
+
+
+def clean_prompt_line(text):
+    """Вытащить строку промта из болтливого ответа модели (пусто, если промта там нет).
+
+    Дешёвые модели иногда отвечают рассуждением на другом языке или пустотой: такой ответ нельзя
+    молча превращать в промт, но и терять годную строку не нужно — берём последнюю похожую на промт.
+    """
+    body = re.sub(r"```[a-zA-Z]*", "", str(text or ""))
+    lines = []
+    for raw in body.splitlines():
+        line = _BULLET_RE.sub("", raw).strip().strip('"«»\'* ')
+        if len(line) < 12 or _CJK_RE.search(line) or line[:1] in "{[<" or "\":" in line and '"' in line:
+            continue
+        low = line.lower()
+        if low.endswith(":") or any(h in low[:24] for h in _META_HINTS):
+            continue
+        lines.append(line)
+    return lines[-1] if lines else ""
+
+
 def _idea_sentences(idea):
     """Идея → аккуратные предложения: шаблон не должен склеивать чужие строки в одну фразу."""
     text = " ".join(str(idea or "").split())
@@ -294,15 +323,33 @@ def write_series(plan, fetch=None, style="", refs=(), language="ru", extra="", s
 
     if fetch is None:
         return {"written": template(only), "used": "template", "messages": messages}
+    expect = 1 if only is not None else None
+    strict = messages + [{"role": "user", "content": _STRICT_NOTE}]
+    answer, error, attempts, last_exc = "", "", 0, None
     try:
-        written = parse_answer(fetch(messages), plan, expect=1 if only is not None else None, index=only)
-        return {"written": written, "used": "llm", "messages": messages, **({"only": only} if only is not None else {})}
+        for attempt in (0, 1):
+            attempts = attempt + 1
+            answer = fetch(messages if attempt == 0 else strict)
+            try:
+                written = parse_answer(answer, plan, expect=expect, index=only)
+                out = {"written": written, "used": "llm", "messages": messages, "attempts": attempts}
+                return {**out, **({"only": only} if only is not None else {})}
+            except Exception as exc:
+                error, last_exc = str(exc), exc
+                # модель ответила строкой вместо JSON — для одного отрезка это готовый промт
+                line = clean_prompt_line(answer)
+                if only is not None and line:
+                    written = {"title": "", "logline": "",
+                               "segments": [{"index": int(only), "prompt": line, "note": "писатель ответил строкой"}]}
+                    return {"written": written, "used": "llm-line", "messages": messages, "attempts": attempts,
+                            "only": only}
+        raise last_exc if last_exc is not None else RuntimeError("Писатель не дал промтов")
     except Exception as exc:
         if not allow_fallback:
             raise
         fallback = template(only)
         fallback["error"] = str(exc)
-        return {"written": fallback, "used": "template", "messages": messages, "error": str(exc),
+        return {"written": fallback, "used": "template", "messages": messages, "error": str(exc), "attempts": attempts,
                 **({"only": only} if only is not None else {})}
 
 

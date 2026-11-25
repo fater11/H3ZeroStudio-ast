@@ -198,3 +198,50 @@ def test_build_project_keeps_a_hard_cut_series_cut():
     project = S.build_project(plan, S.fallback_prompts(plan), name="Стык")
     assert project["settings"]["overlap_blocks"] == 0 and project["settings"]["continuity_ref"] is False
     assert project["settings"]["continuation_method"] == "last_frame"
+
+
+def test_a_chatty_answer_is_not_mistaken_for_a_prompt():
+    """Дешёвая модель отвечает рассуждением (в т.ч. на другом языке) — это не промт."""
+    reasoning = ("- 用俄语回答（因为提示是俄语，且系统指令是俄语）\n- 只回答一行。\n"
+                 "- 描述画面：女人，修理，老式收音机\n构思一行俄语提示词")
+    assert S.clean_prompt_line(reasoning) == ""
+    assert S.clean_prompt_line("") == ""
+    assert S.clean_prompt_line("- Промпт: что-то про часы\n") == ""
+    good = "Женщина заводит настенные часы в мастерской, пыль искрится в луче света из окна."
+    assert S.clean_prompt_line(good) == good
+    assert S.clean_prompt_line("Думаю так:\n- вариант\n" + good) == good
+
+
+def _chatty_then_json(plan):
+    calls = {"n": 0}
+
+    def fetch(messages):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "分词思考：应当描述 мастерская 和 часы."      # рассуждение вместо JSON
+        assert "ТОЛЬКО JSON" in messages[-1]["content"]          # повтор идёт с усиленным заданием
+        return ('{"title":"Часы","logline":"","segments":[{"prompt":"Женщина заводит настенные часы в мастерской, '
+                'свет из окна падает на шестерёнки.","note":""}]}')
+
+    return fetch, calls
+
+
+def test_a_reasoning_answer_triggers_one_strict_retry():
+    plan = S.plan_beats("женщина и часы", 12, w=960, h=544, beats=2)
+    fetch, calls = _chatty_then_json(plan)
+    got = S.write_series(plan, fetch=fetch, only=1)
+    assert got["used"] == "llm" and got["attempts"] == 2 and calls["n"] == 2
+    assert got["written"]["segments"][0]["prompt"].startswith("Женщина заводит")
+
+
+def test_a_hopeless_writer_falls_back_after_two_attempts():
+    plan = S.plan_beats("женщина и часы", 12, w=960, h=544, beats=2)
+    calls = {"n": 0}
+
+    def fetch(messages):
+        calls["n"] += 1
+        return ""
+
+    got = S.write_series(plan, fetch=fetch, only=1)
+    assert got["used"] == "template" and got["attempts"] == 2
+    assert calls["n"] == 2 and got["written"]["segments"][0]["prompt"].startswith("subject_definitions")
