@@ -97,8 +97,13 @@ def test_fallback_writer_makes_one_prompt_per_beat():
     for k, prompt in enumerate((first, second, last), start=1):
         assert f"part {k} of 3" in prompt and "[Shot 1]" in prompt and prompt.rstrip().endswith("N/A")
         assert "Neon night look." in prompt and "Distant crowd." in prompt
-    assert "opens the film" in first and "continues straight" in second
-    assert "next part can continue" in second and "next part can continue" not in last
+    assert "This part opens the film." in first and "continues the previous part exactly" in second
+    assert "next one continues from" in second and "next one continues from" not in last
+    assert written["segments"][0]["note"].startswith("шаблон")          # the template says it is a draft
+    # the idea keeps its own sentences instead of being glued into the middle of one line
+    long_idea = S.plan_beats("Первая мысль. Вторая мысль!", 20, w=960, h=544, budget=200_000, beats=2)
+    text = S.fallback_prompts(long_idea)["segments"][0]["prompt"]
+    assert "Первая мысль. Вторая мысль! The part ends" in text
 
 
 def test_write_series_uses_the_writer_and_falls_back_on_a_bad_answer():

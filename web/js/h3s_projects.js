@@ -99,6 +99,7 @@ export function installProjects(Editor, { C, h, ICON }) {
       this.stopPlayback?.();
       this.galClose?.(); this.closeSaveDialog?.();
       this.p = C.normalizeProject(p);
+      this.astConnApply?.();          // the remembered API address / key / model fill this project's empty fields
       this.undoStack = []; this.redoStack = []; this.lastCoalesce = null;
       this.sel = this.p.segments.length ? 0 : -1; this.playhead = 0; this.pvMode = "full";
       this._gal = null; this.galSel = []; this._projSaved = JSON.stringify(this.p);

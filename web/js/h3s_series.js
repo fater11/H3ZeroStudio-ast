@@ -109,7 +109,8 @@ export function installSeries(Editor, { C, h, ICON }) {
           h("button", { class: "pri", onclick: () => this.srProject(true) }, T("Создать и сохранить"))),
         plan && st.written ? h("div", null,
           h("div", { class: "rep" }, `${st.written.title || ""} ${st.written.logline ? "· " + st.written.logline : ""}`
-            + ` · ${T("писатель: {0}", st.used === "llm" ? T("модель") : T("шаблон"))}`),
+            + ` · ${T("писатель: {0}", st.used === "llm" ? T("модель") : T("шаблон"))}`
+            + ((seg || {}).note ? ` · ${T(seg.note)}` : "")),
           h("pre", null, (seg || {}).prompt || (contains(st.written.segments, st.shot) ? "" : T("Промта пока нет"))),
           h("button", { onclick: () => this.srCopy((seg || {}).prompt) }, T("Копировать промпт")),
           h("button", { onclick: () => this.srRewrite() }, T("Написать заново")))

@@ -3270,4 +3270,14 @@ export default {
   "Отрезок {0} пришёл без промта": "Segment {0} arrived without a prompt",
   "Промта пока нет": "No prompt yet",
   "Написать заново": "Write again",
+
+  // The assistant connection remembered outside the project.
+  "Запомнить для всех проектов": "Remember for every project",
+  "Запомнить адрес и ключ": "Remember the address and key",
+  "Забыть": "Forget",
+  "Адрес и ключ запомнены: {0}": "The address and key are remembered: {0}",
+  "Нечего запоминать: заполните адрес и модель": "Nothing to remember: fill in the address and the model",
+  "Запомненный адрес и ключ забыты (в открытом проекте они остались)": "The remembered address and key are forgotten (the open project keeps its own)",
+  "Запомнено в этом браузере: {0}. Открывая другой или новый проект, ассистент подставит эти адрес, ключ и модель.": "Remembered in this browser: {0}. Another or a new project will open with this address, key and model filled in.",
+  "Пока ничего не запомнено. Нажмите «Запомнить адрес и ключ» — и новые проекты будут открываться с этим адресом и моделью (ключ лежит только в этом браузере).": "Nothing is remembered yet. Press “Remember the address and key” and new projects will open with this address and model (the key stays in this browser only).",
 };

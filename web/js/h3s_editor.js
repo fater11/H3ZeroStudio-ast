@@ -121,6 +121,7 @@ export class H3Editor {
   constructor(host) {
     this.host = host;
     this.p = C.normalizeProject(host.load());
+    this.astConnApply?.();   // remember the assistant's address / key / model across projects
     this.sel = this.p.segments.length ? 0 : -1;
     this.playhead = 0;
     this.zoom = 1;
@@ -229,7 +230,7 @@ export class H3Editor {
   }
 
   /** Re-read the project from the node (e.g. workflow reloaded) when closed. */
-  reload() { if (!this.root) this.p = C.normalizeProject(this.host.load()); }
+  reload() { if (!this.root) { this.p = C.normalizeProject(this.host.load()); this.astConnApply?.(); } }
 
   // ------------------------------------------------------------------ state
   snapshot() { return JSON.stringify(this.p); }

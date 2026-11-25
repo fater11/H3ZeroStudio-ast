@@ -1,4 +1,6 @@
 import { T, tServer } from "./h3s_i18n.js";
+import { CONN_KEYS, describe as describeConn, forget as forgetConn, recall as recallConn,
+         remember as rememberConn, stored as storedConn } from "./h3s_assist_conn.js";
 import { PORTABLE_H3, PROMPT_STYLES } from "./h3s_prompt_library.js";
 
 const COMMON_RULES = `You are a senior MiniMax H3 prompt engineer, following the official MiniMax H3 prompt-writing guides. H3 generates 4–15 second video and 32 kHz stereo sound in one pass at 24 fps. Communicate with the user in Russian, but write the finished H3 prompt in English. Keep dialogue, lyrics, and visible scene text verbatim in their original language. Match the exact duration of the current segment from the context. Describe observable physical actions, expressions, object state changes, composition, lighting, camera, and synchronous sound; avoid plot summaries and abstract visual adjectives. Do not invent dialogue, references, or details absent from the input. When enough information is available, immediately provide the complete prompt in one code block without comments inside. Use only reference labels supplied by the context and keep each label's meaning unchanged throughout the output.`;
@@ -360,7 +362,32 @@ export function installAssist(Editor, { C, h, ICON }) {
       this.p = C.normalizeProject({ ...this.p, assistant: a });
       this.flushSave();
     },
-    astApplyCfg(patch) { this.astSet((a) => { a.cfg = { ...a.cfg, ...patch }; }); },
+    astApplyCfg(patch) {
+      this.astSet((a) => { a.cfg = { ...a.cfg, ...patch }; });
+      // the connection follows the user between projects: remembered here, while the project keeps its own copy
+      if (Object.keys(patch || {}).some((k) => CONN_KEYS.includes(k))) rememberConn({ ...this.p.assistant.cfg, ...patch });
+    },
+
+    /** Fill this project's empty connection fields from the remembered ones (called when a project is opened). */
+    astConnApply() {
+      const got = recallConn((this.p.assistant || {}).cfg || {});
+      if (!got.changed) return false;
+      this.astSet((a) => { a.cfg = { ...a.cfg, ...got.cfg }; });
+      return true;
+    },
+
+    astConnRememberNow() {
+      const saved = rememberConn(this.p.assistant.cfg);
+      const shown = describeConn(saved);
+      this.toast(shown ? T("Адрес и ключ запомнены: {0}", shown) : T("Нечего запоминать: заполните адрес и модель"));
+      this.renderAssistSettings();
+    },
+
+    astConnForgetNow() {
+      forgetConn();
+      this.toast(T("Запомненный адрес и ключ забыты (в открытом проекте они остались)"));
+      this.renderAssistSettings();
+    },
     astDraftId() { return this.p?.assistant?.active || "none"; },
     astLoadDrafts() {
       try {
@@ -1344,6 +1371,13 @@ export function installAssist(Editor, { C, h, ICON }) {
         this.astConnectionState(),
         this.field(T("Адрес API"), base),
         h("div", null, h("div", { class: "h3l-lbl" }, T("Ключ API")), h("div", { class: "h3l-row" }, key, show), h("div", { class: "h3l-note" }, T("Для локальных серверов ключ обычно не нужен. Ключ хранится в данных проекта — не публикуйте проект с секретным ключом."))),
+        h("div", null, h("div", { class: "h3l-lbl" }, T("Запомнить для всех проектов")),
+          h("div", { class: "h3l-row" },
+            h("button", { class: "h3l-btn sm", type: "button", onclick: () => this.astConnRememberNow() }, T("Запомнить адрес и ключ")),
+            h("button", { class: "h3l-btn sm", type: "button", onclick: () => this.astConnForgetNow() }, T("Забыть"))),
+          h("div", { class: "h3l-note" }, describeConn(storedConn())
+            ? T("Запомнено в этом браузере: {0}. Открывая другой или новый проект, ассистент подставит эти адрес, ключ и модель.", describeConn(storedConn()))
+            : T("Пока ничего не запомнено. Нажмите «Запомнить адрес и ключ» — и новые проекты будут открываться с этим адресом и моделью (ключ лежит только в этом браузере)."))),
         h("div", null, h("div", { class: "h3l-lbl" }, T("Модель")), h("div", { class: "h3l-row" }, model,
           h("button", { class: "h3l-btn sm", disabled: st.state === "checking" || undefined, onclick: () => this.astConnect() }, st.state === "checking" ? T("Обновление…") : T("Обновить")))),
         h("div", { class: "h3l-grid2" }, this.field(T("Таймаут ответа, сек"), timeout), this.field(T("Endpoint выгрузки (необязательно)"), endpoint)),

@@ -188,27 +188,48 @@ def parse_answer(text, plan, expect=None, index=None):
             "segments": out}
 
 
+def _idea_sentences(idea):
+    """Идея → аккуратные предложения: шаблон не должен склеивать чужие строки в одну фразу."""
+    text = " ".join(str(idea or "").split())
+    if not text:
+        return ["One continuous scene."]
+    parts = [s.strip() for s in re.split(r"(?<=[.!?…])\s+", text) if s.strip()]
+    out = []
+    for s in parts:
+        s = s[0].upper() + s[1:] if s else s
+        out.append(s if s.endswith((".", "!", "?", "…")) else s + ".")
+    return out
+
+
 def fallback_prompts(plan, style="", sound="", voice=""):
-    """Шаблонный писатель: серия собирается без LLM (промты в формате H3, по отрезку на шаг)."""
-    idea = plan["idea"] or "one continuous scene"
+    """Шаблонный писатель: серия собирается без LLM (промты в формате H3, по отрезку на шаг).
+
+    Это рыба, а не готовый промт: идея повторяется в описании как есть, оговаривается часть и связь с
+    предыдущей — по ней удобно писать свой текст или править ответ модели. В `note` стоит пометка «шаблон».
+    """
     beats = plan["beats"]
+    sentences = _idea_sentences(plan["idea"])
+    body = " ".join(sentences)
     out = []
     for b in beats:
-        part = f"part {b['index'] + 1} of {len(beats)}" 
-        cont = ("It continues straight from the previous part: the same framing, the same light and the same "
-                "pose at the first frame." if b["overlap"] else "The clip opens the film at its first frame.")
-        tail = (" It ends in a pose the next part can continue from." if b["index"] < len(beats) - 1 else "")
+        part = f"{b['index'] + 1} of {len(beats)}"
+        cont = ("The first frame continues the previous part exactly: the same framing, light and pose."
+                if b["overlap"] else "This part opens the film.")
+        tail = (" The part ends in a pose the next one continues from."
+                if b["index"] < len(beats) - 1 else " The part ends the film.")
         lines = [
             "subject_definitions:",
-            f"<Subject 1> is the person of the scene: the same face, hair, build and outfit in every part (this is {part}).",
+            f"<Subject 1> is the person of the scene: the same face, hair, build and outfit in every part "
+            f"(this shot is part {part}).",
             "summary:",
-            f"[reference generation] The target video presents a {b['seconds']:.1f}-second shot, {part} of one "
-            f"continuous story: {idea}",
+            f"[reference generation] The target video presents a {b['seconds']:.1f}-second shot, part {part} "
+            f"of one continuous story.",
             "retention_analysis:",
-            "<Subject 1> (appears in [Shot 1]): fully_preserved - the look and outfit stay the same from the first frame to the last.",
+            "<Subject 1> (appears in [Shot 1]): fully_preserved - the look and outfit stay the same from the "
+            "first frame to the last.",
             "detailed_description:",
             f"{style or 'A realistic live-action scene, real-time speed, no slow motion.'}",
-            f"[Shot 1] {cont} {idea.capitalize()}, {part} of the story.{tail}",
+            f"[Shot 1] {cont} {body}{tail}",
             "overall_soundscape:",
             sound or "The sound of the scene, matching the action on screen.",
             "non_diegetic_music:",
@@ -216,8 +237,9 @@ def fallback_prompts(plan, style="", sound="", voice=""):
         ]
         if voice:
             lines.append(f"spoken: {voice}")
-        out.append({"index": b["index"], "prompt": "\n".join(lines), "note": ""})
-    return {"title": plan["idea"][:60], "logline": idea, "segments": out}
+        out.append({"index": b["index"], "prompt": "\n".join(lines),
+                    "note": "шаблон — напишите свой текст или подключите модель в «Ассистенте»"})
+    return {"title": " ".join(sentences)[:60], "logline": body, "segments": out}
 
 
 def write_series(plan, fetch=None, style="", refs=(), language="ru", extra="", sound="", allow_fallback=True,

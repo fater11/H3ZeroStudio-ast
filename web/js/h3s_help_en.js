@@ -281,6 +281,12 @@ export const HELP_EN = [
 <li><b>Trained latent upscaler</b>: the <code>MinimaxH3LatentUpscaler3D</code> node and the <code>minimax_h3_latent_upscaler_3d_bf16.safetensors</code> model → <code>models/latent_upscale_models</code> (folders from <code>extra_model_paths.yaml</code> work too).</li>
 </ul>
 <p>What was found and what is missing is shown in “Settings” → “Models”, along with the folder paths. After installing a model or node, restart ComfyUI.</p>`],
+  ["assist_conn", "🔌 Assistant: keep the address and key", `
+<p><b>Why it resets.</b> The assistant's API address, key and model live <b>inside the project data</b>, which keeps a project reproducible. Another or a new project therefore opens with empty fields.</p>
+<p><b>How to make it stick.</b> “Assistant” → “Settings” → the API address block → <b>“Remember the address and key”</b>. The values are kept in this browser (localStorage key <code>h3ls.ast.conn</code>) and filled into any project whose fields are empty, new ones included. Typing an address, key or model remembers it as well.</p>
+<p><b>To forget.</b> <b>“Forget”</b> clears the remembered copy: the open project keeps its own values and other projects stop receiving them. A private-mode browser may refuse to store them — then they live in the project only.</p>
+<p><b>Secrets.</b> The key still sits in the project once you typed it there: a project sent to someone else or exported as a zip carries the key with it. Use a local server without a key, or clear the key before sharing.</p>
+<p><b>Not carried over.</b> Presets (styles, prompt modes, templates) stay with the project: they are part of its recipe, not a machine setting.</p>`],
   ["faq", "Questions and problems", `
 <dl>
 <dt>🧪 Two people talk in the first clip — enable voice anchoring?</dt>
