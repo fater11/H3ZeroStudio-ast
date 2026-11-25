@@ -37,7 +37,7 @@ def test_brand_roundtrip_and_normalization(tmp_path, monkeypatch):
     monkeypatch.setattr(tv, "root", lambda: str(tmp_path))
     saved = tv.brand_save({"name": "Кофейня на углу", "accent": "#ff8800", "cta_seconds": 999,
                            "logo_pos": "xx", "render": {"model": "m.safetensors", "piflow_steps": 7}})
-    assert saved["id"] == "кофейня-на-углу" and saved["logo_pos"] == "br" and saved["cta_seconds"] == 60.0
+    assert saved["id"] == "kofeinya-na-uglu"   # ids stay ASCII: they travel in URLs and folder names and saved["logo_pos"] == "br" and saved["cta_seconds"] == 60.0
     assert saved["render"]["piflow_steps"] == 0 and saved["render"]["no_audio"] is False
     assert [b["id"] for b in tv.brands()] == [saved["id"]]
     assert tv.brand_get(saved["id"])["name"] == "Кофейня на углу"

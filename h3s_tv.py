@@ -48,8 +48,17 @@ def _write(path, data):
     return data
 
 
+TRANS = {"а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e", "ж": "zh", "з": "z",
+         "и": "i", "й": "i", "к": "k", "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r", "с": "s",
+         "т": "t", "у": "u", "ф": "f", "х": "h", "ц": "c", "ч": "ch", "ш": "sh", "щ": "sch", "ъ": "",
+         "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya"}
+
+
 def slug(text, fallback="item"):
-    s = re.sub(r"[^0-9a-zA-Zа-яА-Я_-]+", "-", str(text or "").strip().lower()).strip("-")
+    """ASCII id from a name: ids go into URLs, folder names and prompt client ids, so keep them safe."""
+    raw = str(text or "").strip().lower()
+    raw = "".join(TRANS.get(ch, ch) for ch in raw)
+    s = re.sub(r"[^0-9a-z_-]+", "-", raw).strip("-")
     return (s or fallback)[:48]
 
 
