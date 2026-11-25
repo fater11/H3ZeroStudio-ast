@@ -662,6 +662,34 @@ def decode_chunks(vae, v, chunks):
 
 
 # ---------------------------------------------------------------- crop planning
+def audio_guard(chunks, A):
+    """Проверка звука при полосовом проходе: окна должны покрывать всю дорожку.
+
+    Звук у нас считается один раз на низкой сетке и переносится в результат как есть (H3MD закрывает это
+    отдельным досчётом — нам он не нужен, но правило должно быть проверяемым): полосы не должны оставить
+    участок звука без покрытия и не должны требовать его пересчёта в каждой полосе.
+    """
+    A = int(A)
+    if A <= 0:
+        return {"frames": 0, "gaps": [], "covered": True, "windows": len(chunks)}
+    def span(it):
+        if isinstance(it, dict):                      # план кропов: t=(v0,v1), a=(a0,a1)
+            a = it.get("a") or (0, 0)
+            return int(a[0]), int(a[1])
+        return int(it[2]), int(it[3])                 # оконный план: (v0, v1, a0, a1)
+
+    spans = sorted(span(it) for it in chunks)
+    gaps, cursor = [], 0
+    for a0, a1 in spans:
+        if a0 > cursor:
+            gaps.append((cursor, a0))
+        cursor = max(cursor, a1)
+    if cursor < A:
+        gaps.append((cursor, A))
+    return {"frames": A, "gaps": [(int(a), int(b)) for a, b in gaps], "covered": not gaps,
+            "windows": len(spans)}
+
+
 def frames_for_latent_t(t):
     return sum(FRAME_PER_TOKEN[k % 5] for k in range(t))
 
@@ -950,7 +978,11 @@ def run_upscale(model, clip, vae, project, index, items, v, a, frames, prev_up, 
     up / prompt / label: a span's upscale («Апскейл участка»: its window latent, its own prompt, no chain).
     models: () -> (model, clip), resolved only after the first upscaler input (the preset base / LoRA clone is not
     touched before the upscaler ran); preview_factory(model) builds the live preview then.
-    Returns (video latent [1,24,T,H/16,W/16], audio latent unchanged, info dict)."""
+    Returns (video latent [1,24,T,H/16,W/16], audio latent unchanged, info dict).
+
+    Звук здесь именно `a` без изменений: полосовой/плиточный проход считает только картинку, а звук остаётся
+    тем, что посчитан на низкой сетке целиком (иначе после нескольких полос он тускнеет — issue #5 у H3MD).
+    """
     from . import h3s_gen as gen
     s = project["settings"]
     seg = project["segments"][index]
@@ -964,6 +996,10 @@ def run_upscale(model, clip, vae, project, index, items, v, a, frames, prev_up, 
     T, A = v.shape[2], a.shape[-1]
     chunks = chunk_plan(s, T, A, method)
     nch = len(chunks)
+    guard = audio_guard(chunks, A)
+    if not guard["covered"] and A:
+        log(f"segment {index + 1} upscale: звук покрыт не полностью (пропуски {guard['gaps']}), "
+            f"аудио берётся из исходного латента как есть")
     name = label or f"segment {index + 1}"
     log(f"{name} upscale: {vram_note()} before the upscale")
     log(f"{name} upscale: {bw}x{bh} -> {W}x{H} ({W * H / 1e6:.2f} MP), input {effective_input(want) or want}"
