@@ -161,6 +161,7 @@ def test_render_writes_the_spliced_reference_video(tmp_path):
     # ... while the source's own first frame sat far to the left: the order really changed
     assert _bar(got[0]) - _bar(source[0]) > 60
     assert res["duration"] == pytest.approx(res["frames"] / 24, abs=0.05)
+    assert media.video_info(out)["has_audio"] is False      # у синтетического исходника звука нет
 
 
 def test_draft_script_splits_on_cuts(tmp_path):

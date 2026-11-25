@@ -220,31 +220,49 @@ def analyze_video(path, side=SAMPLE_SIDE, cuts=None, mode="scenes", strength=1.0
             "report": report(before, after)}
 
 
-def _mux_audio(video, src, dst):
-    """Готовое видео + звук исходника в один файл (без перекодирования обеих дорожек)."""
+def _audio_stream(out, src):
+    """Дорожка звука для нового файла: звук исходника, перекодированный в aac.
+
+    Перекладывание чужой дорожки на своё перекодированное видео (stream copy) у muxer не сходится,
+    поэтому звук кодируется заново из исходника — как в остальных экспортах пака.
+    """
+    import numpy as np
+    try:
+        wave, sr = media.load_audio(src)
+    except Exception:
+        return None, None, 0
+    if wave is None or not len(wave.shape) or not wave.shape[-1]:
+        return None, None, 0
+    wav = np.clip(np.asarray(wave)[:2], -1, 1).astype(np.float32)
+    try:
+        from .h3s_seams import taper_edges
+        wav = taper_edges(wav.copy(), int(sr))
+    except Exception:
+        pass
+    layout = "stereo" if wav.shape[0] == 2 else "mono"
+    stream = out.add_stream("aac", rate=int(sr), layout=layout)
+    stream.bit_rate = 192000
+    return stream, wav, int(sr)
+
+
+def _write_audio(out, stream, wav, sr, chunk=1024):
+    """Кадры звука в контейнер (поток уже добавлен; pts нумерует muxer)."""
     import av
-    with av.open(video) as vin, av.open(src) as sin:
-        v_in = vin.streams.video[0]
-        a_in = sin.streams.audio[0] if sin.streams.audio else None
-        if a_in is None:
-            return False
-        out = av.open(dst, mode="w", format="mp4")
-        try:
-            v_out = out.add_stream(template=v_in)
-            a_out = out.add_stream(template=a_in)
-            for packet in vin.demux(v_in):
-                if packet.dts is None:
-                    continue
-                packet.stream = v_out
-                out.mux(packet)
-            for packet in sin.demux(a_in):
-                if packet.dts is None:
-                    continue
-                packet.stream = a_out
-                out.mux(packet)
-        finally:
-            out.close()
-    return True
+    if stream is None or wav is None or not wav.shape[-1]:
+        return 0
+    total = 0
+    layout = getattr(getattr(stream, "layout", None), "name", None) or ("stereo" if wav.shape[0] == 2 else "mono")
+    for i in range(0, wav.shape[-1], chunk):
+        piece = wav[:, i:i + chunk]
+        frame = av.AudioFrame.from_ndarray(piece, format="fltp", layout=layout)
+        frame.sample_rate = int(sr)
+        frame.pts = None
+        for packet in stream.encode(frame):
+            out.mux(packet)
+        total += piece.shape[-1]
+    for packet in stream.encode():
+        out.mux(packet)
+    return total
 
 
 def correct_video(src, dst, mode="scenes", strength=1.0, cuts=None, side=SAMPLE_SIDE, limit=DRIFT_LIMIT,
@@ -260,6 +278,9 @@ def correct_video(src, dst, mode="scenes", strength=1.0, cuts=None, side=SAMPLE_
     tmp = dst + ".part.mp4"
     out = av.open(tmp, mode="w", format="mp4")
     n, rate = 0, 24.0
+    astr, wav, sr = (None, None, 0)
+    if audio:
+        astr, wav, sr = _audio_stream(out, src)
     try:
         with av.open(src) as c:
             st = c.streams.video[0]
@@ -284,20 +305,15 @@ def correct_video(src, dst, mode="scenes", strength=1.0, cuts=None, side=SAMPLE_
                     progress(n, total)
             for packet in vs.encode():
                 out.mux(packet)
+            written = _write_audio(out, astr, wav, sr)
+            if written:
+                print(f"[H3ZS] дрейф: звук перекодирован из исходника ({written / max(1, sr):.2f} с)", flush=True)
     finally:
         out.close()
     media.replace_file(tmp, dst)
-    muxed = False
-    if audio:
-        with_audio = dst + ".audio.mp4"
-        try:
-            muxed = _mux_audio(dst, src, with_audio)
-            if muxed:
-                media.replace_file(with_audio, dst)
-        except Exception:
-            muxed = False
     res = dict(plan)
-    res.update({"path": dst, "frames": n, "corrected_frames": len(gain), "audio_kept": muxed,
+    res.update({"path": dst, "frames": n, "corrected_frames": len(gain),
+                "audio_kept": bool(astr is not None), "audio_seconds": round((written / sr) if astr else 0.0, 2),
                 "fps": rate})
     return res
 

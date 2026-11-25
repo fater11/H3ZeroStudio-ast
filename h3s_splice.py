@@ -384,12 +384,17 @@ def render(ops, src, out_path, w=None, h=None, audio=None, fps=FPS, progress=Non
             progress(k + 1, total)
     import torch
     tensor = torch.from_numpy(np.stack(frames).astype("float32") / 255.0)
-    wave = splice_audio(src, audio, fps=fps) if audio else None
+    wave, rate = (None, 0)
+    if audio:
+        got = splice_audio(src, audio, fps=fps)
+        if got:
+            wave, rate = got
     if wave is not None:
         wave = torch.from_numpy(np.ascontiguousarray(wave, dtype=np.float32))
-    media.write_mp4(out_path, tensor, fps=fps, waveform=wave, encoder=encoder)
+    media.write_mp4(out_path, tensor, fps=fps, waveform=wave, sample_rate=rate or None, encoder=encoder)
     return {"path": out_path, "frames": len(frames), "width": w, "height": h,
-            "duration": round(len(frames) / fps, 3), "audio": bool(wave is not None)}
+            "duration": round(len(frames) / fps, 3), "audio": bool(wave is not None),
+            "sample_rate": rate}
 
 
 def total_src_frames(ops, fps=FPS):
@@ -404,14 +409,17 @@ def total_src_frames(ops, fps=FPS):
 
 
 def splice_audio(src, audio, fps=FPS, sample_rate=None):
-    """Звук сборки: отрезки исходника в новом порядке, тишина на переходах и в конце."""
+    """Звук сборки: отрезки исходника в новом порядке, тишина на переходах и в конце.
+
+    Возвращает (волна [C, L], частота дискретизации) — без частоты write_mp4 дорожку не пишет.
+    """
     import numpy as np
     try:
         wave, sr = media.load_audio(src)
     except Exception:
-        return None
+        return None, 0
     if wave is None:
-        return None
+        return None, 0
     wave = np.asarray(wave)
     if wave.ndim == 1:
         wave = np.stack([wave, wave])
@@ -427,9 +435,8 @@ def splice_audio(src, audio, fps=FPS, sample_rate=None):
         pieces.append(piece)
         total += piece.shape[1]
     if not pieces:
-        return None
-    out = np.concatenate(pieces, axis=1)
-    return out
+        return None, 0
+    return np.concatenate(pieces, axis=1), int(sr)
 
 
 def write_splice(script_text, src, out_dir, name="splice", w=None, h=None, budget=None, characters=(),
