@@ -164,6 +164,18 @@ def test_writing_one_segment_at_a_time():
                        only=0, allow_fallback=False)
 
 
+def test_the_last_json_object_wins_when_the_model_reasoned_first():
+    """Thinking-модель пишет черновики по пути: готовый ответ берём последним, а не первым."""
+    plan = S.plan_beats("Двое настраивают лодку", 20, w=960, h=544, budget=200_000, beats=1)
+    text = ('Сначала прикину: {"segments": [{"prompt": "черновик"}]} — нет, нужен формат H3.\n'
+            'Теперь по правилам: {"title": "Лодка", "segments": [{"prompt": "detailed_description:\\n[Shot 1] готовый"}]}')
+    got = S.parse_answer(text, plan)
+    assert got["segments"][0]["prompt"].endswith("готовый") and got["title"] == "Лодка"
+    # и braces внутри строк не ломают разбор
+    tricky = '{"segments": [{"prompt": "он говорит {тихо} и уходит"}]}'
+    assert S.parse_answer(tricky, plan)["segments"][0]["prompt"].endswith("уходит")
+
+
 def test_build_project_gives_a_normal_pack_project():
     plan = S.plan_beats("Двое настраивают лодку у причала", 30, w=960, h=544, budget=200_000, beats=3,
                         overlap_blocks=1)

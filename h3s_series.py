@@ -148,8 +148,39 @@ def writer_messages(idea, plan, style="", refs=(), language="ru", extra="", only
             {"role": "user", "content": "\n".join(lines)}]
 
 
+def _objects(text):
+    """Все сбалансированные {...} из текста (строки в кавычках не мешают)."""
+    out, depth, start, in_str, esc = [], 0, None, False, False
+    for i, ch in enumerate(str(text)):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth:
+                depth -= 1
+            if depth == 0 and start is not None:
+                out.append(str(text)[start:i + 1])
+                start = None
+    return out
+
+
 def _json_block(text):
-    """Достать JSON из ответа модели: чистый, в ```-блоке или в окружении текста."""
+    """Достать JSON из ответа модели: чистый, в ```-блоке или в окружении текста.
+
+    Если объектов несколько (модель рассуждала и писала черновики), берём ПОСЛЕДНИЙ разобравшийся:
+    готовый ответ стоит в конце, а не в начале размышлений.
+    """
     raw = str(text or "").strip()
     fence = re.search(r"```(?:json)?\s*(.+?)```", raw, re.S)
     if fence:
@@ -158,9 +189,11 @@ def _json_block(text):
         return json.loads(raw)
     except ValueError:
         pass
-    start, end = raw.find("{"), raw.rfind("}")
-    if start >= 0 and end > start:
-        return json.loads(raw[start:end + 1])
+    for candidate in reversed(_objects(raw)):
+        try:
+            return json.loads(candidate)
+        except ValueError:
+            continue
     raise ValueError("Писатель вернул не JSON — нужен объект с segments")
 
 
