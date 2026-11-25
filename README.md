@@ -100,20 +100,12 @@
 
 ## 📦 Установка
 
-**Рекомендуется — через ComfyUI Manager.** Откройте **Manager → Custom Nodes Manager**, найдите **H3ZeroStudio**, нажмите **Install** и перезапустите ComfyUI. Страница в реестре: [registry.comfy.org · h3labstudio](https://registry.comfy.org/publishers/zeroleloushe/nodes/h3labstudio).
-
-**Или через comfy-cli:**
-
-```bash
-comfy node install h3labstudio
-```
 
 **Вручную (git clone):**
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/zeroleloushe/H3ZeroStudio.git ComfyUI-H3ZeroStudio
-```
+git clone https://github.com/fater11/H3ZeroStudio-ast
 
 Дальше:
 - **Зависимости ставить не нужно.** Используются torch, numpy, Pillow, PyAV и aiohttp, которые уже есть в ComfyUI (`requirements.txt` пустой, там только опции).
@@ -125,7 +117,7 @@ git clone https://github.com/zeroleloushe/H3ZeroStudio.git ComfyUI-H3ZeroStudio
 
 ```bat
 cd ComfyUI\custom_nodes
-git clone https://github.com/zeroleloushe/H3ZeroStudio.git ComfyUI-H3ZeroStudio
+git clone https://github.com/fater11/H3ZeroStudio-ast
 ```
 </details>
 
