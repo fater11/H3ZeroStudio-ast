@@ -2738,10 +2738,15 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                 continue
             pr = core.segment_preset(proj, i) or {}
             name = str(pr.get("model") or "")
-            path = (folder_paths.get_full_path("diffusion_models", name)
-                    if pr.get("base") == "unet" and name else None)
+            path = folder_paths.get_full_path("diffusion_models", name) if name else None
+            if not path and name and os.path.isabs(name) and os.path.isfile(name):
+                path = name
+            # молчим, когда файла нет или он не найден: свою ошибку о модели отрезок скажет сам,
+            # а «не выбрана» в предупреждении только пугает (проверка всё равно совещательная)
+            if not path:
+                continue
             if not piflow_has_pruned_layout(path):
-                warn = (f"pi-H3 DWD: отрезок {i + 1}: модель «{name or 'не выбрана'}» не похожа на pruned-структуру "
+                warn = (f"pi-H3 DWD: отрезок {i + 1}: модель «{name}» не похожа на pruned-структуру "
                         f"(48 AdaLN блоков 96768×8) — генерация продолжится, но качество и совместимость DWD не гарантированы")
                 log("  " + warn)
         log(f"pi-H3 DWD: {pi_n}-step experimental, layout check advisory only, adapter {filename}")
