@@ -3248,6 +3248,9 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         else:
             from . import h3s_stream_export as pipe_export
             plan, reason = pipe_export.prepare(d, proj, keys, items, run_w, run_h, fps, studio_mode)
+            if plan and plan.get("no_colour"):
+                log("потоковый экспорт: цветокоррекция не подготовлена для отрезков "
+                    + ", ".join(str(i + 1) for i in plan["no_colour"]) + " — они поедут без цветового слоя")
             if plan is not None:
                 try:
                     notify("phase", seg=max(0, len(items) - 1), phase="audio_mix")
@@ -3795,8 +3798,9 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                 if i == 0 and studio_cached is not None and studio_cached[1] is None:
                     studio_cached = None  # clip 1 must restore its original Lab reference
         if operation == "assemble" and studio_mode and studio_cached is None:
-            raise ValueError(f"H3ZeroStudio: цветокоррекция отрезка {i + 1} не подготовлена. "
-                             "Сначала нажмите «🎨 Цветокоррекция» в настройках.")
+            # неподготовленная цветокоррекция не должна блокировать сборку: собираем из мастер-копии
+            # отрезка (её всё равно декодируем по одному отрезку, память не растёт), но говорим об этом
+            log(f"studio: цветокоррекция отрезка {i + 1} не подготовлена — собираю из мастер-копии отрезка")
         if studio_cached is not None:
             frames = studio_cached[0]
             vlog(f"studio: colour-frame cache HIT clip {i + 1} {studio_cache_key[:12]} "

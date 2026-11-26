@@ -85,12 +85,12 @@ assert.equal(settings.p.settings.final_mode, "full");
 settings.chooseGenerationMode("luna");
 settings.applyGenerationMode();
 assert.equal(settings.p.settings.final_mode, "luna");
-settings.chooseGenerationMode("stock");
+settings.chooseGenerationMode("two");
 assert.equal(settings.p.settings.final_mode, "luna",
   "Stock selection must remain unapplied until confirmed");
 settings.applyGenerationMode();
 assert.equal(settings.p.settings.final_mode, "refine");
-assert.equal(settings.p.settings.refine_schedule_mode, "sigma");
+assert.equal(settings.p.settings.refine_schedule_mode, "basic", "Two-pass mode preserves the selected schedule");
 assert.equal(settings.p.settings.refine_identity_images, false);
 assert.equal(settings.p.settings.settings_scope, "project");
 console.log("Generation mode requires explicit Apply: PASS");

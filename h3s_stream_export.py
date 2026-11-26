@@ -53,7 +53,7 @@ def prepare(project_dir, project, keys, items, width, height, fps, studio_mode=F
     from . import h3s_core as core
     if core.lock_clips(project):
         return None, "звуковая дорожка с блокировкой требует совместимой сборки"
-    sources, waves, rate, prev_studio = [], [], None, None
+    sources, waves, rate, prev_studio, no_colour = [], [], None, None, []
     for i, it in enumerate(items):
         key = keys[i]
         segment = project["segments"][it["index"]]
@@ -83,8 +83,12 @@ def prepare(project_dir, project, keys, items, width, height, fps, studio_mode=F
         if studio_mode:
             colour_key = studio_cache.identity(key, keys[0], prev_studio, it, width, height, fps)
             if not os.path.isfile(studio_cache.path_for(project_dir, colour_key)):
-                return None, f"цветокоррекция отрезка {i + 1} ещё не подготовлена"
-            prev_studio = colour_key
+                # цветокоррекция не подготовлена: это не повод отказываться от потокового экспорта —
+                # отрезок поедет без цветового слоя, а вызывающий скажет об этом в логе
+                colour_key = None
+                no_colour.append(i)
+            else:
+                prev_studio = colour_key
         sources.append({"path": filename, "overlap": int(it.get("overlap") or 0) if i else 0,
                         "link": it.get("link", "start"), "frames": int(it["frames"]),
                         "colour_key": colour_key})
@@ -100,7 +104,7 @@ def prepare(project_dir, project, keys, items, width, height, fps, studio_mode=F
          "version": "ffmpeg-pipe-v1"}, sort_keys=True).encode()).hexdigest()[:16]
     return {"sources": sources, "waves": waves, "rate": rate, "frames": total, "fps": fps,
             "width": width, "height": height, "studio": bool(studio_mode), "tag": tag,
-            "project_dir": project_dir}, ""
+            "project_dir": project_dir, "no_colour": no_colour}, ""
 
 
 def mixed_audio(plan, project, stitch_audio, normalize_level):

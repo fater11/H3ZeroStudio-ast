@@ -15,6 +15,7 @@ e.p = {
     aspect: "9:16", megapixels: 0.5, final_mode: "full",
     steps: 8, cfg: 1, sampler: "euler", scheduler: "beta57",
     draft_steps: 8, draft_sampler: "euler", refine_steps: 3,
+    refine_schedule_mode: "basic", // a saved choice must survive switching to two passes
     accel: { attention: "kitchen", veda: false },
   },
 };
@@ -52,8 +53,8 @@ await e.changeGenerationPreset("rename", "preset-a", "Euler 8 v2");
 assert.equal(saved[0].name, "Euler 8 v2");
 await e.changeGenerationPreset("delete", "preset-a");
 assert.equal(saved.length, 0);
-e.chooseGenerationMode("advanced");
-assert.equal(e.pendingGenerationMode(), "advanced");
+e.chooseGenerationMode("two");
+assert.equal(e.pendingGenerationMode(), "two");
 assert.equal(e.p.settings.final_mode, "full", "Choosing a mode must not change settings before Apply");
 e.applyGenerationMode();
 assert.equal(e.p.settings.final_mode, "refine");

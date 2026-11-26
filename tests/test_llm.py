@@ -289,33 +289,41 @@ class ApiBackendTest(unittest.TestCase):
 
         async def exercise():
             route_table = web.RouteTableDef()
+            # маршрут перед вызовом модели проверяет очередь ComfyUI и не трогает модели под активным рендером
             fake_server = types.SimpleNamespace(PromptServer=types.SimpleNamespace(
-                instance=types.SimpleNamespace(routes=route_table)))
-            with mock.patch.dict(sys.modules, {"server": fake_server}):
-                self.assertTrue(h3s_routes.register())
-            app = web.Application()
-            app.add_routes(route_table)
-            client = TestClient(TestServer(app))
-            await client.start_server()
+                instance=types.SimpleNamespace(
+                    routes=route_table,
+                    prompt_queue=types.SimpleNamespace(get_current_queue=lambda: ([], [])))))
+            # маршрут читает очередь в момент запроса, поэтому подмена модуля держится весь тест
+            patcher = mock.patch.dict(sys.modules, {"server": fake_server})
+            patcher.start()
             try:
-                async with client.post("/h3lab/llm/chat", json={
-                    "messages": [{"role": "user", "content": "Hi"}],
-                    "max_tokens": 1200, "thinking": False,
-                    "sampling": {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0.0,
-                                 "presence_penalty": 1.5, "repetition_penalty": 1.0},
-                    "api_base": self.base, "api_key": "secret", "api_model": "a-model",
-                }) as response:
-                    self.assertEqual(response.status, 200)
-                    self.assertIn("text/event-stream", response.headers["Content-Type"])
-                    events = [json.loads(line[6:]) for line in (await response.text()).splitlines() if line.startswith("data: ")]
-                self.assertEqual([e["text"] for e in events if e["kind"] == "token"], ["Hello", ", H3"])
-                self.assertEqual(events[-1]["kind"], "end")
-                self.assertEqual(self.server.payload["top_k"], 20)
-                self.assertEqual(self.server.payload["presence_penalty"], 1.5)
-                self.assertEqual(self.server.payload["chat_template_kwargs"], {"enable_thinking": False})
-                self.assertIs(self.server.payload["think"], False)
+                self.assertTrue(h3s_routes.register())
+                app = web.Application()
+                app.add_routes(route_table)
+                client = TestClient(TestServer(app))
+                await client.start_server()
+                try:
+                    async with client.post("/h3lab/llm/chat", json={
+                        "messages": [{"role": "user", "content": "Hi"}],
+                        "max_tokens": 1200, "thinking": False,
+                        "sampling": {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0.0,
+                                     "presence_penalty": 1.5, "repetition_penalty": 1.0},
+                        "api_base": self.base, "api_key": "secret", "api_model": "a-model",
+                    }) as response:
+                        self.assertEqual(response.status, 200)
+                        self.assertIn("text/event-stream", response.headers["Content-Type"])
+                        events = [json.loads(line[6:]) for line in (await response.text()).splitlines() if line.startswith("data: ")]
+                    self.assertEqual([e["text"] for e in events if e["kind"] == "token"], ["Hello", ", H3"])
+                    self.assertEqual(events[-1]["kind"], "end")
+                    self.assertEqual(self.server.payload["top_k"], 20)
+                    self.assertEqual(self.server.payload["presence_penalty"], 1.5)
+                    self.assertEqual(self.server.payload["chat_template_kwargs"], {"enable_thinking": False})
+                    self.assertIs(self.server.payload["think"], False)
+                finally:
+                    await client.close()
             finally:
-                await client.close()
+                patcher.stop()
 
         asyncio.run(exercise())
 

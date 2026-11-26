@@ -26,7 +26,8 @@ assert rejects([.69, .3], require_zero=True)
 assert check(None) is None
 source = src.read_text(encoding="utf-8")
 node = (src.parent / "nodes.py").read_text(encoding="utf-8")
-assert all(x in node for x in ("model_pass2", "sampler_pass2", "sigmas_pass2"))
+assert all(x in node for x in ("model_pass2", "sampler_pass2"))
+assert '"sigmas_pass2"' not in node, "External Stage-2 SIGMAS was intentionally removed from the node inputs"
 assert 'return ov_.float().cpu(), original_audio' in source
 assert 'proj["settings"]["_pass2_external"] = pass2_sig' in source
 assert 'separate refine pass, not trajectory continuation' in source

@@ -123,10 +123,17 @@ def test_level_lock_in_run_only_touches_decoded_frames(tmp_path, monkeypatch):
     monkeypatch.setattr(folder_paths, "get_output_directory", lambda: str(out))
     monkeypatch.setattr(folder_paths, "get_input_directory", lambda: str(inp))
     pt = tiny_patcher()
-    img1, _, lat1, info1 = gen.run_project(pt, FakeClip(), FakeVAE(), tg.project())
+    # классический level lock работает в режиме «overlap»: в студийном его намеренно не накладывают
+    # (студийный мост сам правит тон, и общий фильтр вернул бы Lab-несовпадение)
+    p0 = tg.project()
+    p0["settings"]["continuation_method"] = "overlap"
+    img1, _, lat1, info1 = gen.run_project(pt, FakeClip(), FakeVAE(), p0)
     s1 = info1["segments"][1]["seam"]
+    # Нормированная оценка делится на медиану шагов рядом, а она на синтетическом фикстуре почти ноль
+    # (шаг 37 против медианы 0.25): одна сотая изменения шага на стыке качает отношение на процент.
+    # Гарантия лока — не «оценка обязательно ниже», а то, что он не портит стык и правит только своё окно.
     assert s1["raw"]["ratio"] >= s1["ratio"] and "level" in s1
-    p = tg.project(); p["settings"]["level_lock"] = False
+    p = tg.project(); p["settings"]["level_lock"] = False; p["settings"]["continuation_method"] = "overlap"
     img2, _, lat2, info2 = gen.run_project(pt, FakeClip(), FakeVAE(), p)
     assert all(r["cached"] for r in info2["segments"])                      # not in the cache key
     assert "raw" not in info2["segments"][1]["seam"]

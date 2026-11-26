@@ -201,19 +201,54 @@ def gallery_delete(pid, eid):
     kind, key = m.groups()
     names = [f"full_{key}.mp4"] if kind == "full" else \
         [f"seg_r{key}.mp4", f"seg_r{key}_tiles.jpg", f"seg_r{key}_poster.jpg", os.path.join("cache", f"region_{key}.pt")] if kind == "reg" else [f"seg_{key}.mp4", f"seg_{key}_tiles.jpg", f"seg_{key}_poster.jpg", os.path.join("cache", f"seg_{key}.pt")]
-    n = 0
-    for name in names:
-        p = os.path.join(d, name)
+    # файлы дубля бывают с суффиксом студийного прохода (seg_<key>_studio_c3.mp4) и лежат в подпапках проекта,
+    # причём subfolder ссылки считается от корня output — поэтому ищем по имени файла внутри папки проекта
+    with _LOCK:
+        entry = (_read_json(gallery_file(d), None) or {}).get("items", {}).get(eid) or {}
+    wanted = {os.path.basename(str(ref["filename"])) for ref in (entry.get("video"), entry.get("poster"),
+                                                                entry.get("strip"))
+              if isinstance(ref, dict) and ref.get("filename")}
+    found = {}
+    for root, dirs, files in os.walk(d):
+        dirs[:] = [name for name in dirs if name != "frozen"]     # зафиксированная копия живёт своей жизнью
+        if os.path.relpath(root, d).count(os.sep) > 3:
+            continue
+        for name in files:
+            if name in wanted:
+                found.setdefault(name, []).append(os.path.join(root, name))
+    seen, n = set(), 0
+    for p in [os.path.join(d, name) for name in names] + [p for paths in found.values() for p in paths]:
+        key_full = os.path.normcase(os.path.abspath(p))
+        if key_full in seen:
+            continue
+        seen.add(key_full)
         if os.path.isfile(p):
             try:
                 os.remove(p)
                 n += 1
             except OSError:
                 pass
-    keep = kind == "seg" and os.path.isfile(os.path.join(d, "frozen", f"seg_{key}.mp4"))   # the frozen copy stays visible
+    # зафиксированная копия остаётся видимой: у дубля файлы бывают со студийным суффиксом, поэтому ищем по имени
+    fdir = os.path.join(d, "frozen")
+    frozen = sorted(os.listdir(fdir)) if os.path.isdir(fdir) else []
+
+    def frozen_for(suffix):
+        hits = [name for name in frozen if name.startswith(f"seg_{key}") and name.endswith(suffix)]
+        return hits[0] if hits else None
+
+    keep = kind == "seg" and bool(frozen_for(".mp4"))
     with _LOCK:
         idx = _read_json(gallery_file(d), None)
-        if idx and not keep and idx.get("items", {}).pop(eid, None) is not None:
+        item = (idx or {}).get("items", {}).get(eid)
+        if idx and keep and item is not None:
+            # запись продолжает жить, но теперь ссылается на зафиксированные файлы
+            for field, suffix in (("video", ".mp4"), ("poster", "_poster.jpg"), ("strip", "_tiles.jpg")):
+                name = frozen_for(suffix)
+                if name:
+                    item[field] = _ref(f"h3labstudio/{pid}/frozen", name)
+            item["frozen"] = True
+            _write_json(gallery_file(d), idx)
+        elif idx and not keep and idx.get("items", {}).pop(eid, None) is not None:
             _write_json(gallery_file(d), idx)
     return n
 
