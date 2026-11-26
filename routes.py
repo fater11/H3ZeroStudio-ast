@@ -62,6 +62,12 @@ def register():
                                   "schedulers": list(comfy.samplers.KSampler.SCHEDULERS),
                                   "tiny_vaes": tiny_vaes(), "upscale": upscale_caps(), "accel": accel_caps(), "paths": model_paths()})
 
+    @routes.get("/h3lab/assist/defaults")
+    async def assist_defaults(request):
+        """Связь ассистента из параметров запуска сервера: они главнее проекта и браузера."""
+        from . import h3s_assist_defaults
+        return web.json_response({"ok": True, **h3s_assist_defaults.defaults()})
+
     @routes.get("/h3lab/settings")
     async def settings_get(request):
         from . import h3s_library as lib

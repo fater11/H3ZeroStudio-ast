@@ -3,6 +3,14 @@
 // another project would start with empty fields — these few values are filled back from the browser store.
 const KEY = "h3ls.ast.conn";
 
+// Значения из параметров запуска ComfyUI (/h3lab/assist/defaults): если поле задано там, оно главнее
+// и проекта, и браузера — «если есть в параметрах запуска, всегда берём оттуда».
+let FORCED = {};
+export function setForced(values, from) { FORCED = values && typeof values === "object" ? { ...values } : {}; FROM = from || {}; return FORCED; }
+export function forced() { return FORCED; }
+export function forcedFrom() { return FROM; }
+let FROM = {};
+
 /** Fields worth carrying over. Style/prompt presets stay in the project: they are part of its recipe. */
 export const CONN_KEYS = ["backend", "comfy_encoder", "api_base", "api_key", "api_model",
                           "stream_timeout", "max_tokens", "temperature", "top_p", "thinking", "engine_defaults"];
@@ -44,7 +52,12 @@ export function recall(cfg, ls) {
   const saved = stored(ls);
   const out = { ...(cfg || {}) };
   let changed = false;
+  for (const k of CONN_KEYS) {          // параметры запуска перебивают всё, что уже лежит в проекте
+    if (FORCED[k] === undefined) continue;
+    if (out[k] !== FORCED[k]) { out[k] = FORCED[k]; changed = true; }
+  }
   for (const k of CONN_KEYS) {
+    if (FORCED[k] !== undefined) continue;
     if (saved[k] === undefined || !isBlank(out[k])) continue;
     out[k] = saved[k];
     changed = true;

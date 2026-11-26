@@ -3272,6 +3272,7 @@ export default {
   "Написать заново": "Write again",
 
   // The assistant connection remembered outside the project.
+  "Задано параметрами запуска ComfyUI: {0}. Эти значения главнее проекта и браузера, здесь их не изменить.": "Set by the ComfyUI launch parameters: {0}. These values override the project and the browser and cannot be changed here.",
   "Запомнить для всех проектов": "Remember for every project",
   "Запомнить адрес и ключ": "Remember the address and key",
   "Забыть": "Forget",

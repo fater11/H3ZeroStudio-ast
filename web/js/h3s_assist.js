@@ -1,6 +1,6 @@
 import { T, tServer } from "./h3s_i18n.js";
-import { CONN_KEYS, describe as describeConn, forget as forgetConn, recall as recallConn,
-         remember as rememberConn, stored as storedConn } from "./h3s_assist_conn.js";
+import { CONN_KEYS, describe as describeConn, forced as forcedConn, forget as forgetConn, recall as recallConn,
+         remember as rememberConn, setForced as setForcedConn, stored as storedConn } from "./h3s_assist_conn.js";
 import { PORTABLE_H3, PROMPT_STYLES } from "./h3s_prompt_library.js";
 
 const COMMON_RULES = `You are a senior MiniMax H3 prompt engineer, following the official MiniMax H3 prompt-writing guides. H3 generates 4–15 second video and 32 kHz stereo sound in one pass at 24 fps. Communicate with the user in Russian, but write the finished H3 prompt in English. Keep dialogue, lyrics, and visible scene text verbatim in their original language. Match the exact duration of the current segment from the context. Describe observable physical actions, expressions, object state changes, composition, lighting, camera, and synchronous sound; avoid plot summaries and abstract visual adjectives. Do not invent dialogue, references, or details absent from the input. When enough information is available, immediately provide the complete prompt in one code block without comments inside. Use only reference labels supplied by the context and keep each label's meaning unchanged throughout the output.`;
@@ -366,6 +366,22 @@ export function installAssist(Editor, { C, h, ICON }) {
       this.astSet((a) => { a.cfg = { ...a.cfg, ...patch }; });
       // the connection follows the user between projects: remembered here, while the project keeps its own copy
       if (Object.keys(patch || {}).some((k) => CONN_KEYS.includes(k))) rememberConn({ ...this.p.assistant.cfg, ...patch });
+    },
+
+    /** Один раз за сессию: связь ассистента из параметров запуска ComfyUI (они главнее проекта). */
+    astConnLoad() {
+      if (this._astConnP) return this._astConnP;
+      const get = this.host.get || this.host.getRaw;
+      this._astConnP = (get ? get("/h3lab/assist/defaults") : Promise.resolve(null))
+        .then((r) => {
+          const v = (r && r.values) || {};
+          if (!Object.keys(v).length) return {};
+          setForcedConn(v, r.from || {});
+          if (this.astConnApply()) { this.renderAssistSettings?.(); this.renderAssistHead?.(); }
+          return v;
+        })
+        .catch(() => ({}));
+      return this._astConnP;
     },
 
     /** Fill this project's empty connection fields from the remembered ones (called when a project is opened). */
@@ -1343,9 +1359,10 @@ export function installAssist(Editor, { C, h, ICON }) {
             onclick: () => this.astConnect() }, T("Подключить")),
           h("div", { class: "h3l-note" }, T("До 4 изображений по 768 px за запрос. Загрузка Gemma может занять время; после ответа VRAM освобождается. Режим API остаётся доступным.")));
       }
-      const base = h("input", { class: "h3l-in", type: "text", inputmode: "url", value: cfg.api_base, placeholder: "http://127.0.0.1:1234/v1", spellcheck: "false", "data-ast-cfg": "api_base", autocomplete: "off" });
+      const locked = forcedConn();
+      const base = h("input", { class: "h3l-in", type: "text", inputmode: "url", value: cfg.api_base, placeholder: "http://127.0.0.1:1234/v1", spellcheck: "false", "data-ast-cfg": "api_base", autocomplete: "off", disabled: locked.api_base !== undefined || undefined });
       base.oninput = () => this.astText("api_base", base, true);
-      const key = h("input", { class: "h3l-in", type: "password", value: cfg.api_key, placeholder: "sk-…", autocomplete: "off", spellcheck: "false", "data-ast-cfg": "api_key" });
+      const key = h("input", { class: "h3l-in", type: "password", value: cfg.api_key, placeholder: "sk-…", autocomplete: "off", spellcheck: "false", "data-ast-cfg": "api_key", disabled: locked.api_key !== undefined || undefined });
       key.oninput = () => this.astText("api_key", key, true);
       const show = h("button", { class: "h3l-btn sm", type: "button", onclick: () => { key.type = key.type === "password" ? "text" : "password"; show.textContent = key.type === "password" ? T("Показать") : T("Скрыть"); } }, T("Показать"));
       const models = st.models || [];
@@ -1367,6 +1384,8 @@ export function installAssist(Editor, { C, h, ICON }) {
       return h("div", { class: "h3l-card h3l-glass h3l-insp-block" },
         h("div", { class: "h3l-card-h" }, h("h4", null, T("OpenAI-совместимый API"))),
         h("div", { class: "h3l-note" }, T("Поддерживаются LM Studio, Ollama, llama-server, vLLM, OpenAI и другие серверы с endpoints /models и /chat/completions.")),
+        Object.keys(locked).length ? h("div", { class: "h3l-note" },
+          T("Задано параметрами запуска ComfyUI: {0}. Эти значения главнее проекта и браузера, здесь их не изменить.", Object.keys(locked).join(", "))) : null,
         engineField,
         this.astConnectionState(),
         this.field(T("Адрес API"), base),

@@ -121,6 +121,7 @@ export class H3Editor {
   constructor(host) {
     this.host = host;
     this.p = C.normalizeProject(host.load());
+    this.astConnLoad?.();    // параметры запуска ComfyUI: связь ассистента оттуда главнее проекта
     this.astConnApply?.();   // remember the assistant's address / key / model across projects
     this.sel = this.p.segments.length ? 0 : -1;
     this.playhead = 0;

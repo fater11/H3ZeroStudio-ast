@@ -71,7 +71,8 @@ def test_every_project_open_fills_the_connection():
     editor = (JS / "h3s_editor.js").read_text(encoding="utf-8")
     projects = (JS / "h3s_projects.js").read_text(encoding="utf-8")
     assist = (JS / "h3s_assist.js").read_text(encoding="utf-8")
-    assert "this.p = C.normalizeProject(host.load());\n    this.astConnApply?.();" in editor
+    assert "this.p = C.normalizeProject(host.load());\n    this.astConnLoad?.();" in editor    # параметры запуска
+    assert "this.astConnApply?.();" in editor
     assert "this.astConnApply?.();" in projects and "loadProject(p, msg)" in projects
     assert "rememberConn({ ...this.p.assistant.cfg, ...patch })" in assist
     assert "astConnRememberNow" in assist and "astConnForgetNow" in assist and "astConnApply()" in assist
