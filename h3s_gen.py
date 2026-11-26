@@ -2700,6 +2700,10 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         pass2_sig["sampler"] = sampler_signature(CUSTOM["sampler_pass2"])
     if CUSTOM["sigmas_pass2"] is not None:
         pass2_sig["sigmas"] = [round(float(x), 6) for x in CUSTOM["sigmas_pass2"].tolist()]
+    if pass2_sig:
+        # The second-pass model/sampler must invalidate only stage-2 results,
+        # never a completed draft from the same source project.
+        proj["settings"]["_pass2_external"] = pass2_sig
     if proj["settings"].get("final_mode") == "luna":
         proj["settings"]["_luna_upscale_env"] = upscale.env_tag("learned", proj["settings"].get("upscale_model") or None)
     rk = proj["run"].get("kind")   # per-run override: ✎ draft / ✦ final from the draft of one clip, «✦ Чистовики»
@@ -2741,15 +2745,15 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
             path = folder_paths.get_full_path("diffusion_models", name) if name else None
             if not path and name and os.path.isabs(name) and os.path.isfile(name):
                 path = name
-            # молчим, когда файла нет или он не найден: свою ошибку о модели отрезок скажет сам,
-            # а «не выбрана» в предупреждении только пугает (проверка всё равно совещательная)
+            # Не найденный путь разберёт Resolver; существующие веса проверяются строго
+            # до запуска pi-H3, чтобы несовместимость не проявилась на GPU.
             if not path:
                 continue
             if not piflow_has_pruned_layout(path):
-                warn = (f"pi-H3 DWD: отрезок {i + 1}: модель «{name}» не похожа на pruned-структуру "
-                        f"(48 AdaLN блоков 96768×8) — генерация продолжится, но качество и совместимость DWD не гарантированы")
-                log("  " + warn)
-        log(f"pi-H3 DWD: {pi_n}-step experimental, layout check advisory only, adapter {filename}")
+                raise ValueError(
+                    f"pi-H3 DWD: отрезок {i + 1}: модель «{name}» несовместима с pruned-структурой "
+                    "(ожидаются 48 AdaLN блоков 96768×8); выберите pruned-модель перед запуском DWD")
+        log(f"pi-H3 DWD: {pi_n}-step experimental, pruned layout verified, adapter {filename}")
     # model & LoRA presets: wired inputs win per part; the preset (project / clip override) gives the rest
     from . import h3s_models
     wired_sig = model_signature(model, clip, vae, audio_vae)

@@ -591,7 +591,9 @@ export class Studio extends H3Editor {
     if (e.target?.closest?.(".v6-pop") && k !== "Escape" && this.root.contains(e.target)) return;   // menus / popovers own the keyboard (their own listeners)
     const tg = e.target, inField = tg && tg.tagName === "INPUT" && !tg.classList.contains("h3l-sink") && /^(text|search|number|)$/.test(tg.type || "");
     if (inField && k === "Enter" && this.root.contains(tg)) { e.stopPropagation(); e.preventDefault(); tg.blur(); if (tg.closest(".v6-pop")) closePopover(); this.focusSink(); return; }
-    if (k === "Escape" && document.querySelector(".v6-pop.on")) { e.stopPropagation(); return; }   // the popover closes itself
+    if (k === "Escape" && this.root.querySelector(".v6-pop:not(.off)")) {
+      e.preventDefault(); e.stopPropagation(); closePopover(); return;
+    }   // a popover may exist before its opening animation adds .on
     if (ctrl && (k === "k" || k === "K" || e.code === "KeyK")) { e.preventDefault(); e.stopPropagation(); this.openPalette(); return; }
     if (ctrl && (e.code === "Comma")) { e.preventDefault(); e.stopPropagation(); this.openPrefs(); return; }
     if (ctrl && !e.shiftKey && !e.altKey && ["Digit1", "Digit2", "Digit3", "Digit4"].includes(e.code)) { e.preventDefault(); e.stopPropagation(); this.setPage(["edit", "library", "assist", "swap"][+e.code.slice(-1) - 1]); return; }

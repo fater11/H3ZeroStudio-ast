@@ -108,3 +108,18 @@ def test_the_selected_adapter_is_the_one_the_loader_receives(monkeypatch):
 
     with pytest.raises(ValueError):
         gen.piflow_patch_and_sigmas(object(), 3, {})
+
+def test_piflow_preflight_rejects_known_nonpruned_layout():
+    import ast
+    import inspect
+    source = inspect.getsource(gen._run_project)
+    tree = ast.parse(source)
+    guarded = [n for n in ast.walk(tree) if isinstance(n, ast.If)
+               and isinstance(n.test, ast.UnaryOp)
+               and isinstance(n.test.op, ast.Not)
+               and isinstance(n.test.operand, ast.Call)
+               and isinstance(n.test.operand.func, ast.Name)
+               and n.test.operand.func.id == "piflow_has_pruned_layout"]
+    assert len(guarded) == 1
+    assert any(isinstance(n, ast.Raise) for n in guarded[0].body), (
+        "DWD must reject nonpruned weights before loading the GPU adapter")

@@ -1100,7 +1100,9 @@ export class H3Editor {
     $.volBtn = h("button", { class: "h3l-btn icon", title: T("Звук вкл/выкл"), onclick: () => { this.vol.muted = !this.vol.muted; this.userGesture = true; this.autoMuted = false; saveLS("h3ls.volume", this.vol); this.applyVolume(); } });
     $.volR = h("input", { class: "h3l-range vol", type: "range", min: 0, max: 1, step: 0.02, value: this.vol.v, title: T("Громкость") });
     $.volR.oninput = () => { this.vol.v = Number($.volR.value); this.vol.muted = this.vol.v === 0; this.userGesture = true; this.autoMuted = false; saveLS("h3ls.volume", this.vol); this.applyVolume(); };
-    $.center.append(h("div", { class: "h3l-pv-top" }, $.pvTabs, $.pvInfo), this.buildModernQuick(), $.stage,
+    // полоса действий отрезка — над переключателем «Весь ролик / Отрезок»: так она ближе к шапке,
+    // а не висит отдельной строкой между ним и плеером
+    $.center.append(this.buildModernQuick(), h("div", { class: "h3l-pv-top" }, $.pvTabs, $.pvInfo), $.stage,
       h("div", { class: "h3l-transport" },
         h("button", { class: "h3l-btn icon", html: ICON.prev, title: T("К предыдущему отрезку ([)"), onclick: () => this.jumpSeg(-1) }),
         $.playBtn,
@@ -1108,7 +1110,9 @@ export class H3Editor {
         $.time, h("div", { class: "grow" }),
         h("button", { class: "h3l-btn icon", html: H3Editor.VIEWER_ICONS.view, title: T("Удобный просмотр: масштаб до ×4, покадрово, скорость, петля (двойной клик по кадру)"), onclick: () => this.viewerFromPlayer() }),
         h("button", { class: "h3l-btn icon h3l-fsbtn", html: H3Editor.VIEWER_ICONS.fs, title: T("Плеер во весь экран (F) · Esc — выйти"), onclick: () => this.toggleMainFullscreen() }),
-        h("div", { class: "h3l-volume" }, $.volBtn, $.volR)), this.buildDyn());
+        h("div", { class: "h3l-volume" }, $.volBtn, $.volR)));
+    // shortcut: панель «Динамика сэмплирования» под плеером убрана из раскладки (место дороже);
+    // вернуть — дописать this.buildDyn() в конец append выше, код панели целиком живёт в h3s_dyn.js
     $.stage.addEventListener("dblclick", (e) => { if (e.target.closest("button, a, input")) return; this.viewerFromPlayer(); });
     this.applyVolume();
     try { new ResizeObserver(() => this.layoutStage()).observe($.stage); } catch (e) {}

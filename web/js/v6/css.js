@@ -1047,6 +1047,7 @@ html[data-v6][data-v6-motion="reduce"] .v6 .v6-gen.is-busy .v6-ic::before, html[
 /* v6d: clip chrome never sits under an overlap band */
 .v6 .v6-tl .h3l-clip.v6-has-ovr .t, .v6 .v6-tl .h3l-clip.v6-has-ovr .p, .v6 .v6-tl .h3l-clip.v6-has-ovr .rf { margin-right:var(--ovr, 0px); }
 .v6 .v6-tl .h3l-clip.v6-has-ovr .bd, .v6 .v6-tl .h3l-clip.v6-has-ovr .acts { margin-right:var(--ovr, 0px); }
+.v6 .v6-tl .h3l-clip.v6-ovr-tight .t .d { display:none; }
 /* v6d: per-track listen switch in audio heads */
 .v6 .v6-amute { -webkit-appearance:none; appearance:none; position:relative; flex:none; width:24px; height:24px; margin-left:auto; display:grid; place-items:center; border:0; border-radius:5px; background:transparent; color:var(--v6-t2); cursor:default; padding:0; }
 .v6 .v6-amute::after { content:""; position:absolute; inset:-2px; }

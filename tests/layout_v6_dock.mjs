@@ -73,13 +73,43 @@ for (const [w, h] of RES) for (const s of SCALES) {
   // (c) context menus at the far corners
   const vt = await page.locator(".h3l-tscroll").boundingBox();
   for (const [x, y, nm] of [[vt.x + vt.width - 6, vt.y + 44, "video lane (right)"], [null, null, "last audio head"]]) {
-    if (x === null) await page.locator(".v6-ahead").last().click({ button: "right" }); else await page.mouse.click(x, y, { button: "right" });
-    await page.waitForTimeout(250);
+    if (x === null) {
+      const heads = page.locator(".v6-ahead");
+      if (!(await heads.count())) {
+        const info = await page.evaluate(() => {
+          const ed = window.__V6__?.ed, head = ed?.$?.aHead;
+          return { headExists: !!head, connected: !!head?.isConnected,
+            headHtmlLength: head?.innerHTML?.length ?? 0,
+            audioRows: document.querySelectorAll(".v6-alane").length,
+            audioClips: ed?.p?.audio?.clips?.length,
+            audioTracks: ed?.atrkState?.()?.list?.length,
+            htmlReady: document.readyState };
+        });
+        console.log("MISSING_AUDIO_HEAD_DIAG", w, h, s, JSON.stringify(info));
+        errs.push("audio head missing for context menu");
+        continue;
+      }
+      await heads.last().click({ button: "right" });
+    } else await page.mouse.click(x, y, { button: "right" });
+    try { await page.locator(".v6-pop.on").first().waitFor({ state: "attached", timeout: 4000 }); } catch {}
     const pr = await page.evaluate(() => { const p = document.querySelector(".v6-pop.on"); if (!p) return null; const r = p.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; });
     if (!pr) errs.push(`no menu on ${nm}`); else if (pr[0] < 0 || pr[1] < 0 || pr[2] > w + 0.5 || pr[3] > h + 0.5) errs.push(`menu on ${nm} outside viewport [${pr.map((v) => v | 0)}]`);
-    await page.keyboard.press("Escape"); await page.waitForTimeout(200);
+    if (pr) {
+      // A slow frame may leave the popover in the DOM before its .on animation class.
+      if (w === 1280 && s === 100 && nm === "video lane (right)")
+        await page.evaluate(() => document.querySelector(".v6-pop.on")?.classList.remove("on"));
+      await page.keyboard.press("Escape");
+      if (!(await page.evaluate(() => window.__V6__?.ed?.root?.isConnected)))
+        errs.push("Escape closed the editor instead of the context menu");
+    } await page.waitForTimeout(200);
   }
-  if (errs.length) fail++;
+  if (errs.length) {
+    fail++;
+    if (process.env.OUT) {
+      fs.mkdirSync(process.env.OUT, { recursive: true });
+      await page.screenshot({ path: path.join(process.env.OUT, `dock_fail_${w}_${h}_${s}.png`) });
+    }
+  }
   console.log(`${w}x${h} @${s}%: ${errs.length ? "FAIL " + errs.join("; ") : "ok"}`);
   await page.close();
 }

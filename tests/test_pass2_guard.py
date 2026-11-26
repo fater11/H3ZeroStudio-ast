@@ -43,3 +43,27 @@ def test_stage2_must_end_at_zero():
 
 def test_stage1_can_end_at_nonzero():
     assert float(check_sigmas([1.0, .69])[-1]) > 0
+
+def test_external_pass2_signature_changes_only_second_pass_cache():
+    from h3s import h3s_core as core
+    p = core.normalize_project({
+        "id": "stage2-key", "settings": {"final_mode": "refine", "quality": "final"},
+        "segments": [{"id": "s1", "frames": 39, "prompt": "Character moving"}]})
+    draft = core.segment_keys(p, env_sig="same-checkpoint", kind="draft")
+    refine = core.segment_keys(p, env_sig="same-checkpoint", kind="refine")
+    p["settings"]["_pass2_external"] = {"sampler": "separate-euler"}
+    assert core.segment_keys(p, env_sig="same-checkpoint", kind="draft") == draft
+    assert core.segment_keys(p, env_sig="same-checkpoint", kind="refine") != refine
+
+
+def test_generator_persists_external_pass2_signature_before_cache_lookup():
+    tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_run_project")
+    assignments = [n for n in ast.walk(fn) if isinstance(n, ast.Assign)]
+    assert any(isinstance(target, ast.Subscript)
+               and isinstance(target.value, ast.Subscript)
+               and isinstance(target.value.value, ast.Name)
+               and target.value.value.id == "proj"
+               and isinstance(target.slice, ast.Constant)
+               and target.slice.value == "_pass2_external"
+               for n in assignments for target in n.targets)

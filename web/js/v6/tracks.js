@@ -112,7 +112,7 @@ export function installTracks(Studio, { C, h }) {
         setTip(band, this.ovText(o));
         // the band lies over the tail of the previous clip: move that clip's title / status out from under it
         const pe = $.clips?.[i - 1];
-        if (pe) { const pl = parseFloat(pe.style.left) || 0, pw = parseFloat(pe.style.width) || 0, ins = Math.min(Math.max(0, pl + pw - x), Math.max(0, pw - 48)); if (ins > 0) { pe.style.setProperty("--ovr", ins + "px"); pe.classList.add("v6-has-ovr"); } }
+        if (pe) { const pl = parseFloat(pe.style.left) || 0, pw = parseFloat(pe.style.width) || 0, ins = Math.min(Math.max(0, pl + pw - x), Math.max(0, pw - 48)); if (ins > 0) { pe.style.setProperty("--ovr", ins + "px"); pe.classList.add("v6-has-ovr"); if (pw - ins < 160) pe.classList.add("v6-ovr-tight"); } }
         band.addEventListener("pointerdown", (e) => { if (e.button === 0) { e.stopPropagation(); this.browseRunPreview(); this.sel = i; this.selAudio = null; this.pvMode = "segment"; this.renderAll(); } });
         band.addEventListener("contextmenu", (e) => this.clipMenu?.(e, i));
         vt.append(band);

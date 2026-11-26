@@ -30,5 +30,5 @@ assert all(x in node for x in ("model_pass2", "sampler_pass2"))
 assert '"sigmas_pass2"' not in node, "External Stage-2 SIGMAS was intentionally removed from the node inputs"
 assert 'return ov_.float().cpu(), original_audio' in source
 assert 'proj["settings"]["_pass2_external"] = pass2_sig' in source
-assert 'separate refine pass, not trajectory continuation' in source
+assert 'def basic_refine_sigmas(' in source and 'def refine_sigmas(' in source
 print("PASS: 14 standalone assertions (SIGMAS, stage 2, inputs, audio return, cache signature)")
