@@ -45,7 +45,7 @@ export function installWorkspace(Editor, { C, h, ICON }) {
         h("span", { class: "h3l-modern-metric" }, T("Длительность"), " ", h("b", null, C.fmtTime(est.seconds))),
         h("span", { class: "h3l-modern-metric" }, T("Видео"), " ", h("b", null, `${est.width}×${est.height}`)),
         $.modernState, bar,
-        btn(T("Режим генерации"), () => { this._setTab = "gen"; this._preSetTool = this.tool; this.tool = "settings"; this.renderTools(); this.renderLeft(); }, T("Открыть выбор метода генерации с кнопкой «Применить»")),
+        btn(T("Режим генерации"), () => { this._setTab = "gen"; this._preSetTool = this.tool; this.tool = "settings"; this.openLeftPanel(); this.renderTools(); this.renderLeft(); }, T("Открыть выбор метода генерации с кнопкой «Применить»")),
         btn(T("Следующий неготовый"), () => this.modernNextUnfinished(), T("Перейти к первому отрезку без актуального результата")),
         btn(T("Вписать таймлайн"), () => this.fitZoom(), T("Показать весь таймлайн")));
       $.head.append($.modernRibbon);
@@ -96,7 +96,7 @@ export function installWorkspace(Editor, { C, h, ICON }) {
         const vids = (g.items || []).filter((e) => e.pid === this.p.id && e.seg_index === this.sel && e.video)
           .sort((a, b) => Number(b.created || 0) - Number(a.created || 0));
         if (vids.length >= 2) return this.galView(vids.slice(0, 2));
-        this.tool = "gallery"; this.galScope = "project"; this.renderTools(); this.renderLeft();
+        this.tool = "gallery"; this.galScope = "project"; this.openLeftPanel(); this.renderTools(); this.renderLeft();
         this.toast(T("Для сравнения нужны два готовых дубля выбранного отрезка"));
       } catch (e) { this.toast(T("Не удалось открыть сравнение: ") + (e.message || e), true); }
     },

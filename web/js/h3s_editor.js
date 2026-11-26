@@ -384,6 +384,12 @@ export class H3Editor {
       b.title = t; b.setAttribute("aria-label", t); b.textContent = (left !== collapsed) ? "‹" : "›";
     }
   }
+  /** Рейка слева выбирает раздел — и сразу открывает панель, если её свернули: иначе клик ничего не показывает. */
+  openLeftPanel() {
+    if (!this.root || !this.layoutSizes().lc) return false;
+    const u = loadLS(LAYOUT_KEY, {}); u.lc = false; saveLS(LAYOUT_KEY, u);
+    this.applyLayout(); this.renderTimeline(); this.layoutStage(); return true;
+  }
   togglePanel(side) {
     const key = side === "left" ? "lc" : "rc", u = loadLS(LAYOUT_KEY, {});
     u[key] = !this.layoutSizes()[key]; saveLS(LAYOUT_KEY, u);
@@ -559,7 +565,7 @@ export class H3Editor {
   renderTools() {
     const t = this.$.tools; t.innerHTML = "";
     if (this.tool === "audio") this.tool = "assets";
-    const tool = (id, icon, label) => h("div", { class: "h3l-tool" + (this.tool === id ? " on" : ""), title: id === "swap" ? T("Эксперимент: замена персонажа на видео") : label, html: icon + `<span>${label}</span>`, onclick: () => { if (id === "swap") return this.openSwapWorkspace(); if (id === "tv") return this.openTvStudio(); if (id === "splice") return this.openSplice(); if (id === "series") return this.openSeries(); if (this.tool === "swap") this.closeSwapWorkspace(false); this.tvClose?.(); this.spClose?.(); this.srClose?.(); if (id === "assist") this.openAssist(); else { if (id === "settings" && this.tool !== "settings") this._preSetTool = this.tool; this.tool = id; this.renderTools(); this.renderLeft(); } } });
+    const tool = (id, icon, label) => h("div", { class: "h3l-tool" + (this.tool === id ? " on" : ""), title: id === "swap" ? T("Эксперимент: замена персонажа на видео") : label, html: icon + `<span>${label}</span>`, onclick: () => { if (id === "swap") return this.openSwapWorkspace(); if (id === "tv") return this.openTvStudio(); if (id === "splice") return this.openSplice(); if (id === "series") return this.openSeries(); if (this.tool === "swap") this.closeSwapWorkspace(false); this.tvClose?.(); this.spClose?.(); this.srClose?.(); if (id === "assist") this.openAssist(); else { this.openLeftPanel(); if (id === "settings" && this.tool !== "settings") this._preSetTool = this.tool; this.tool = id; this.renderTools(); this.renderLeft(); } } });
     const social = (href, icon, label) => h("a", { class: "h3l-social-link", href, target: "_blank", rel: "noopener noreferrer", title: label, "aria-label": label, html: icon });
     t.append(tool("assets", ICON.assets, T("Ассеты")), tool("chars", ICON.chars, T("Персоны")), tool("swap", ICON.swap, T("Замена")), tool("gallery", ICON.gallery, T("Галерея")), tool("projects", ICON.projects, T("Проекты")), tool("models", ICON.models, T("Модели")), tool("settings", ICON.settings, T("Настройки")), tool("keys", ICON.keys, T("Клавиши")),
       tool("assist", ICON.spark, T("Ассистент")), tool("tv", ICON.spark, T("AI TV")), tool("splice", ICON.splice, T("Сборка")), tool("series", ICON.series, T("Серия")),
