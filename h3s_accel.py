@@ -223,6 +223,19 @@ def _spark_class():
         return None
 
 
+def _spark_backend_ok():
+    """The isolated kernel wheel (spark-h3-kitchen) has to be in ComfyUI's Python env.
+
+    Without it the node still patches, then falls back to dense on every call —
+    «dense after Spark failure: No module named 'spark_h3_kitchen'» in the log.
+    """
+    try:
+        import spark_h3_kitchen  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
 def _apply_spark(model, accel, steps):
     """Patch the model through Spark's own node. `steps` = model evaluations this run."""
     cls = _spark_class()
@@ -273,7 +286,9 @@ def capabilities():
     flash = _registered("flash")
     return {
         "sparse": _sparse_ok(),
-        "spark": _spark_class() is not None,
+        "spark": _spark_class() is not None and _spark_backend_ok(),
+        "spark_kernels": _spark_backend_ok(),
+        "spark_node": _spark_class() is not None,
         "kitchen": kitchen,
         "sage": sage,
         "flash": flash,

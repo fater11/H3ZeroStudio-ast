@@ -59,7 +59,8 @@ def test_spark_settings_normalize_and_sig():
                                "spark_scope": "other", "spark_dense_backend": "x"})
     assert a["spark_mode"] == "fidelity" and a["spark_topk"] == 1.0 and a["spark_warmup"] == 0.0
     assert a["spark_scope"] == "target-video" and a["spark_dense_backend"] == "inherit"
-    assert "spark" in accel.capabilities()
+    caps = accel.capabilities()
+    assert {"spark", "spark_node", "spark_kernels"} <= set(caps)
     s0 = accel.accel_sig({"accel": {}, "steps": 20})
     assert s0 != accel.accel_sig({"accel": {"spark": True}, "steps": 20})
     assert s0 != accel.accel_sig({"accel": {}, "steps": 4})

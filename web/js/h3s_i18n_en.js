@@ -193,6 +193,7 @@ export default {
   "Spark-H3 (блочно-разреженное внимание)": "Spark-H3 (block-sparse attention)",
   "Spark-H3 (zechengtang/Spark-H3): адаптивно-блочное разреженное внимание — заменяет ядро внимания DiT, а не плотный бэкенд. Разогрев идёт через «Attention» выше. VSA и Veda на этот прогон не накладываются.": "Spark-H3 (zechengtang/Spark-H3): adaptive block-sparse attention — it replaces the DiT attention core, not the dense backend. Warmup steps follow «Attention» above. VSA and Veda are not stacked on it for this run.",
   "Нет ноды Spark-H3 под эту видеокарту (нужны SM86/SM89/SM120). Поставьте плагин Spark-H3 в custom_nodes и перезапустите ComfyUI.": "No Spark-H3 node for this video card (SM86/SM89/SM120 required). Install the Spark-H3 plugin into custom_nodes and restart ComfyUI.",
+  "Нода Spark-H3 есть, но в окружении ComfyUI нет пакета ядер spark-h3-kitchen — без него каждый шаг падает в dense. Поставьте колесо под вашу GPU из релиза Spark-H3 (windows-x86_64-smXX-cu130.zip) и перезапустите ComfyUI.": "The Spark-H3 node is there but ComfyUI's Python has no spark-h3-kitchen kernel wheel — without it every step falls back to dense. Install the wheel for your GPU from the Spark-H3 release (windows-x86_64-smXX-cu130.zip) and restart ComfyUI.",
   "Профиль Spark": "Spark profile",
   "Доля точных блоков (Top-K)": "Share of exact blocks (Top-K)",
   "Область разрежения": "Sparsity scope",
