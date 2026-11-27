@@ -4473,9 +4473,11 @@ def segment_media(d, sub, key, frames, a, audio_vae, audio, proj, it, fps, wave=
                 wf, sr = au["waveform"][0], au["sample_rate"]
             t_audio = time.perf_counter() - t
             t = time.perf_counter()
-            # Fast editor-only MP4: cap the LONG edge (portrait too), keep
-            # the source-quality 4:4:4 take master unchanged for export.
-            media.write_mp4(os.path.join(d, name), frames, fps, wf, sr, max_edge=960, crf=22, preset="superfast")
+            # Editor MP4. It used to cap the long edge at 960, so a 768x1344 project played
+            # back as 548x960 and looked like a downgrade next to the 4:4:4 take master.
+            # write_mp4 only scales down above max_edge, so the project size is kept as is and
+            # only oversized projects (long edge > 1344) shrink for the browser player.
+            media.write_mp4(os.path.join(d, name), frames, fps, wf, sr, max_edge=1344, crf=22, preset="superfast")
             t_mp4 = time.perf_counter() - t
     except Exception as e:
         log(f"preview media for {key} failed: {e}")
