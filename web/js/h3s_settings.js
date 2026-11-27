@@ -1059,6 +1059,8 @@ export function installSettings(Editor, { C, h, ICON }) {
         h("div", { class: "h3l-grid2" }, num("preview_frames", T("кадров"), 1, 1, 240), num("preview_fps", T("fps (0 = реал.)"), 1, 0, 60)),
         this.toggle(T("Скрыть стандартное превью ComfyUI"), g.preview_suppress, (v) => set("preview_suppress", v), T("Только превью редактора")),
         this.toggle(T("Подробный лог в консоли"), g.verbose_log, (v) => set("verbose_log", v), T("[H3ZS] в консоли ComfyUI: запуск, отрезки, шаги, стыки и звук")),
+        this.toggle(T("Собирать ролик сразу после последнего отрезка"), g.auto_assemble !== false, (v) => set("auto_assemble", !!v),
+          T("Без цветокоррекции: как только готов последний отрезок, фильм сам собирается из дублей — «Сохранить видео» нажимать не нужно. Выключите, если хотите доснять отрезки и собрать позже.")),
         h("div", { class: "h3l-lbl" }, T("Экспорт MP4"), h("em", null, T("только итоговый файл — кэш и дубли не меняются"))),
         h("div", { class: "h3l-grid2" },
           (() => {

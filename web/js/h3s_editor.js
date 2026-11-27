@@ -2015,7 +2015,7 @@ export class H3Editor {
 
   // ------------------------------------------------------------------ run
   /** upto: -1 = whole project, i = only segments 0..i (cached ones are reused). */
-  async generate({ upto = -1, only = -1, kind = "", region = "", audio = null, face = null, operation = "" } = {}) {
+  async generate({ upto = -1, only = -1, kind = "", region = "", audio = null, face = null, operation = "", colour = undefined } = {}) {
     if (this.run.active) return;
     if (!this.p.segments.length) return this.toast(T("Добавьте хотя бы один отрезок"), true);
     const hard = C.estimate(this.p).warnings.filter((w) => [T("максимум"), "максимум"].some((x) => w.includes(x)));
@@ -2032,7 +2032,8 @@ export class H3Editor {
     }
     const clientToken = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : ("ct" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8));
     try { sessionStorage.setItem("h3ls.inflight", JSON.stringify({ token: clientToken, project: this.p.id, t: Date.now() })); } catch (e) {}
-    this.p.run = { upto: region ? -1 : upto >= 0 && upto < this.p.segments.length - 1 ? upto : -1, only: region ? -1 : only >= 0 ? only : -1, kind: C.RUN_KINDS.includes(kind) ? kind : "", region, operation: op, client_token: clientToken, ...(op === "full" && this._pendingVideoSave ? { export_full: true } : {}), ...(this._pendingVideoSave ? { export_colour: this._pendingVideoSave.colour, export_stream: this._pendingVideoSave.stream, export_pipe: this._pendingVideoSave.pipe } : {}), ...(audio ? { audio } : {}), ...(face ? { face } : {}) };
+    this._genCtx = { op, upto: region ? -1 : upto >= 0 && upto < this.p.segments.length - 1 ? upto : -1, only: region ? -1 : only >= 0 ? only : -1, region };
+    this.p.run = { upto: region ? -1 : upto >= 0 && upto < this.p.segments.length - 1 ? upto : -1, only: region ? -1 : only >= 0 ? only : -1, kind: C.RUN_KINDS.includes(kind) ? kind : "", region, operation: op, client_token: clientToken, ...(op === "full" && this._pendingVideoSave ? { export_full: true } : {}), ...(typeof colour === "boolean" ? { export_colour: colour } : {}), ...(this._pendingVideoSave ? { export_colour: this._pendingVideoSave.colour, export_stream: this._pendingVideoSave.stream, export_pipe: this._pendingVideoSave.pipe } : {}), ...(audio ? { audio } : {}), ...(face ? { face } : {}) };
     this.flushSave();
     this.pendingSigs = C.segmentSigs(this.p, this.p.run.kind || null);
     this.pendingRegionSig = Object.fromEntries((this.p.regions || []).map((r) => [r.id, C.regionSig(this.p, r, this.p.run.kind || null)]));
@@ -2268,12 +2269,28 @@ export class H3Editor {
       // The same completion may arrive via websocket/polling and onExecuted.
       // One helper makes the export idempotent across either delivery order.
       this.continuePendingVideoSave(d);
+      this.maybeAutoAssemble(d);
       return;
     }
     if (!wasActive && this.run.active && this.root) this.renderHeader();
     if (d.event === "start" && this.root) this.renderPreview(); // live / ready switch appears immediately
     this.updateRunUI();
     this.host.onChange?.(this.p);
+  }
+
+  /** «Собирать ролик сразу после последнего отрезка»: assemble from the takes, no colour layer.
+   *  Only a full-project generate counts — «до этого отрезка», «только этот» and «Восстановить»
+   *  leave the film as it is until every segment is ready. */
+  maybeAutoAssemble(info) {
+    const ctx = this._genCtx; this._genCtx = null;
+    if (!ctx || ctx.op !== "generate" || ctx.upto !== -1 || ctx.only !== -1 || ctx.region) return;
+    if (info?.operation !== "generate" || this._pendingVideoSave) return;   // «Сохранить видео» ставит сборку сама
+    if (this.p.settings?.auto_assemble === false || this.p.settings?.cache === false) return;
+    if (!this.p.segments.length || this.p.segments.length > this.items().length) return;
+    if (!this.p.segments.every((s) => s.result?.key)) return;               // ещё не все отрезки готовы
+    Promise.resolve()
+      .then(() => this.generate({ operation: "assemble", colour: false }))
+      .catch((e) => this.toast(T("Автосборка не удалась: ") + (e.message || e), true));
   }
 
   onRunEnded(reason) {
