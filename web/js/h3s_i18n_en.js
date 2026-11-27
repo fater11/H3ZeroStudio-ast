@@ -2991,7 +2991,7 @@ export default {
   "Эксперимент: анализ через выбранную в Ассистенте мультимодальную API-модель. Фото отправляется на настроенный API только после нажатия кнопки; во время генерации анализ недоступен.": "Experimental: analysis uses the vision-capable API model selected in Assistant. Photos are sent to that configured API only on click; unavailable while rendering.",
   "Дождитесь окончания генерации для анализа фото": "Wait until rendering finishes before analysing the photo",
   "Для анализа фото выберите мультимодальную API-модель в настройках Ассистента (не энкодер ComfyUI)": "Choose a vision-capable API model in Assistant settings (not the ComfyUI encoder)",
-  "ComfyUI занят генерацией — анализ фото доступен после окончания очереди": "ComfyUI is busy — photo analysis is available after the render queue finishes",
+
   "Не удалось проверить очередь ComfyUI: ": "Could not check the ComfyUI queue: ",
   "Модель вернула пустое описание": "The model returned an empty description",
   "Фото или текст изменились во время анализа — результат не заменил ваши правки": "The photo or text changed during analysis — your edits were preserved",

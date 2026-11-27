@@ -255,18 +255,9 @@ def register():
                     return web.json_response({"ok": False, "error": "ComfyUI занят генерацией — дождитесь свободной очереди"}, status=409)
             except Exception as e:
                 return web.json_response({"ok": False, "error": str(e)}, status=409)
-        # Both backends can release Comfy's loaded models before calling the LLM.
-        # Never evict an active video render just because a vision/text request arrived.
-        if not native_encoder:
-            try:
-                from server import PromptServer
-                running, pending = PromptServer.instance.prompt_queue.get_current_queue()
-                if running or pending:
-                    return web.json_response({"ok": False,
-                                              "error": "ComfyUI занят генерацией — анализ фото доступен после окончания очереди"}, status=409)
-            except Exception as e:
-                return web.json_response({"ok": False,
-                                          "error": "Не удалось проверить очередь ComfyUI: " + str(e)}, status=503)
+        # The API backend does not touch ComfyUI's queue at all: a text request over HTTP must
+        # work while a render is running. Only its optional "free ComfyUI's models first" step
+        # is best effort — never evict an active render, never fail the request over it.
         messages = b.get("messages") if isinstance(b.get("messages"), list) else []
 
         def number(key, default):
@@ -276,10 +267,16 @@ def register():
                 return default
 
         loop = asyncio.get_running_loop()
-        try:
-            await loop.run_in_executor(None, h3s_llm.release_comfy_models)
-        except Exception as e:
-            return web.json_response({"ok": False, "error": str(e)}, status=409)
+        if native_encoder:
+            try:
+                await loop.run_in_executor(None, h3s_llm.release_comfy_models)
+            except Exception as e:
+                return web.json_response({"ok": False, "error": str(e)}, status=409)
+        else:
+            try:      # best effort: frees ComfyUI's models for a local LLM, skips silently if a render owns the VRAM
+                await loop.run_in_executor(None, lambda: h3s_llm.release_comfy_models(wait_timeout=0))
+            except Exception:
+                pass
         resp = web.StreamResponse()
         resp.headers["Content-Type"] = "text/event-stream; charset=utf-8"
         resp.headers["Cache-Control"] = "no-cache"

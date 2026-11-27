@@ -325,6 +325,44 @@ class ApiBackendTest(unittest.TestCase):
             finally:
                 patcher.stop()
 
+    def test_api_backend_is_not_blocked_by_a_running_render(self):
+        """A text request over the API needs no ComfyUI queue: it must work mid-render."""
+        import asyncio
+        import types
+        from unittest import mock
+        from aiohttp import web
+        from aiohttp.test_utils import TestClient, TestServer
+        from h3s import routes as h3s_routes
+
+        async def exercise():
+            route_table = web.RouteTableDef()
+            busy = types.SimpleNamespace(get_current_queue=lambda: ([["prompt-running"]], []))
+            fake_server = types.SimpleNamespace(PromptServer=types.SimpleNamespace(
+                instance=types.SimpleNamespace(routes=route_table, prompt_queue=busy)))
+            patcher = mock.patch.dict(sys.modules, {"server": fake_server})
+            patcher.start()
+            try:
+                self.assertTrue(h3s_routes.register())
+                app = web.Application()
+                app.add_routes(route_table)
+                client = TestClient(TestServer(app))
+                await client.start_server()
+                try:
+                    async with client.post("/h3lab/llm/chat", json={
+                        "messages": [{"role": "user", "content": "Hi"}], "max_tokens": 200,
+                        "api_base": self.base, "api_key": "secret", "api_model": "a-model",
+                    }) as response:
+                        self.assertEqual(response.status, 200)
+                        text = await response.text()
+                    events = [json.loads(line[6:]) for line in text.splitlines() if line.startswith("data: ")]
+                    self.assertIn("token", [e["kind"] for e in events])
+                finally:
+                    await client.close()
+            finally:
+                patcher.stop()
+
+        asyncio.run(exercise())
+
         asyncio.run(exercise())
 
     def test_model_and_url_are_validated(self):
