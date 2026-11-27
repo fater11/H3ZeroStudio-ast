@@ -34,6 +34,12 @@ import os
 import sys
 
 ATTENTION_BACKENDS = ("kitchen", "sage", "flash", "pytorch")
+# Spark-H3 (zechengtang/Spark-H3, Apache-2.0): adaptive block-sparse attention that replaces the
+# DiT's attention core rather than the dense backend, so it does not stack with VSA or Veda.
+SPARK_MODES = ("fidelity", "speed", "custom", "dense")
+SPARK_SCOPES = ("target-video", "joint-video")
+SPARK_DENSE_BACKENDS = ("inherit", "kitchen", "sage", "sdpa")
+SPARK_WARMUP = {"fidelity": 0.2, "speed": 0.0}   # the node's presets: 20% dense warmup vs none
 DEFAULT_ACCEL = {
     "attention": "kitchen",   # dense backend; falls back when unavailable
     "sparse": False,           # ComfyUI's block-sparse attention (VSA) on top of the dense backend
@@ -44,6 +50,13 @@ DEFAULT_ACCEL = {
     "teacache_thresh": 0.15,
     "compile": False,
     "compile_backend": "inductor",
+    "spark": False,             # Spark-H3 block-sparse attention (replaces VSA/Veda this run)
+    "spark_mode": "fidelity",   # fidelity 20% dense warmup, speed none, custom = spark_warmup
+    "spark_topk": 0.2,          # share of video blocks computed exactly (0.1 fast … 0.3 faithful)
+    "spark_warmup": 0.1,        # dense-warmup share for the custom preset
+    "spark_scope": "target-video",   # joint-video also sparsifies reference-video rows (Ref2VA)
+    "spark_dense_backend": "inherit",
+    "spark_strict": False,      # False: incompatible inputs fall back to dense with a log line
 }
 
 _log = logging.getLogger("h3ls.accel")
@@ -192,6 +205,44 @@ def _import_sparse():
         return None
 
 
+def _spark_class():
+    """Spark-H3's node for this GPU's compute capability, from ComfyUI's own node table."""
+    try:
+        import torch
+        import comfy.model_management as mm
+        major, minor = torch.cuda.get_device_capability(mm.get_torch_device())
+        name = {(12, 0): "MiniMaxH3SparkAttentionSM120",
+                (8, 9): "MiniMaxH3SparkAttentionSM89",
+                (8, 6): "MiniMaxH3SparkAttentionSM86"}.get((int(major), int(minor)))
+        if not name:
+            return None
+        import nodes
+        cls = nodes.NODE_CLASS_MAPPINGS.get(name)
+        return cls if cls is not None and hasattr(cls, "patch") else None
+    except Exception:
+        return None
+
+
+def _apply_spark(model, accel, steps):
+    """Patch the model through Spark's own node. `steps` = model evaluations this run."""
+    cls = _spark_class()
+    if cls is None:
+        raise RuntimeError("Spark-H3 has no node for this GPU (SM86/SM89/SM120 only)")
+    mode = accel["spark_mode"]
+    steps = max(1, int(steps or 20))
+    # 0.0 is a real preset value (speed), so membership decides, not truthiness
+    warm = float(SPARK_WARMUP[mode] if mode in SPARK_WARMUP else (accel.get("spark_warmup") or 0.0))
+    out = cls().patch(
+        model, mode=mode, steps=steps, warmup_mode="warmup_ratio",
+        warmup_ratio=max(0.0, min(1.0, warm)), warmup_steps=max(0, int(round(warm * steps))),
+        topk_mode="topk_ratio", topk_ratio=float(accel["spark_topk"]), topk_blocks=228,
+        dense_layers=0, min_tokens=12288, strict=bool(accel["spark_strict"]),
+        sparse_scope=accel["spark_scope"], dense_backend=accel["spark_dense_backend"],
+        reblock_layout="q_reuse_k", tail_granularity="query", producer_chunk=16384,
+        chunk_path="none")
+    return out[0] if isinstance(out, (tuple, list)) else out
+
+
 def _sparse_ok():
     return _import_sparse() is not None
 
@@ -222,6 +273,7 @@ def capabilities():
     flash = _registered("flash")
     return {
         "sparse": _sparse_ok(),
+        "spark": _spark_class() is not None,
         "kitchen": kitchen,
         "sage": sage,
         "flash": flash,
@@ -259,6 +311,20 @@ def normalize_accel(raw):
     except (TypeError, ValueError):
         thr = 0.15
     out["teacache_thresh"] = round(max(0.05, min(0.5, thr)), 3)
+    out["spark"] = bool(raw.get("spark", False))
+    mode = str(raw.get("spark_mode") or "fidelity").lower().strip()
+    out["spark_mode"] = mode if mode in SPARK_MODES else "fidelity"
+    scope = str(raw.get("spark_scope") or "target-video").lower().strip()
+    out["spark_scope"] = scope if scope in SPARK_SCOPES else "target-video"
+    be_sp = str(raw.get("spark_dense_backend") or "inherit").lower().strip()
+    out["spark_dense_backend"] = be_sp if be_sp in SPARK_DENSE_BACKENDS else "inherit"
+    out["spark_strict"] = bool(raw.get("spark_strict", False))
+    for key, lo, hi, dflt in (("spark_topk", 0.05, 1.0, 0.2), ("spark_warmup", 0.0, 1.0, 0.1)):
+        try:
+            v = float(raw.get(key, dflt))
+        except (TypeError, ValueError):
+            v = dflt
+        out[key] = round(max(lo, min(hi, v)), 3)
     out["compile"] = bool(raw.get("compile", False))
     be = str(raw.get("compile_backend") or "inductor")
     out["compile_backend"] = be if be in ("inductor", "cudagraphs") else "inductor"
@@ -269,7 +335,9 @@ def accel_sig(settings):
     """Cache-key fragment so a settings change busts the patched-model cache."""
     a = normalize_accel((settings or {}).get("accel"))
     return (a["attention"], a["veda"], a["veda_predictor"], a["teacache"],
-            a["teacache_thresh"], a["compile"], a["compile_backend"])
+            a["teacache_thresh"], a["compile"], a["compile_backend"],
+            a["spark"], a["spark_mode"], a["spark_topk"], a["spark_warmup"], a["spark_scope"],
+            a["spark_dense_backend"], a["spark_strict"], int((settings or {}).get("steps") or 20))
 
 
 # ---------------------------------------------------------------- apply
@@ -472,8 +540,20 @@ def apply(model, settings):
             used.append(f"attention={used_name}")
         except Exception as e:
             log(f"attention backend failed ({used_name}): {e}")
+    # 1a) Spark-H3 replaces the attention core itself: VSA and Veda are not stacked on it
+    if accel["spark"]:
+        if not caps["spark"]:
+            log("Spark-H3 requested but no Spark node matches this GPU — skipped")
+        else:
+            if accel["sparse"] or accel["veda"]:
+                log("Spark-H3 is on: VSA and Veda are not stacked on it this run")
+            try:
+                model = _apply_spark(model, accel, (settings or {}).get("steps"))
+                used.append(f"spark({accel['spark_mode']} {int(accel['spark_topk'] * 100)}%)")
+            except Exception as e:
+                log(f"Spark-H3 failed: {e}")
     # 1b) block-sparse attention (ComfyUI core node, no extra pack)
-    if accel["sparse"]:
+    if accel["sparse"] and not accel["spark"]:
         if not caps["sparse"]:
             log("sparse attention requested but the ComfyUI block-sparse node is missing — skipped")
         else:
@@ -483,7 +563,7 @@ def apply(model, settings):
             except Exception as e:
                 log(f"sparse attention failed: {e}")
     # 2) Veda (sparse override on top of the dense backend)
-    if accel["veda"]:
+    if accel["veda"] and not accel["spark"]:
         if not caps["veda"]:
             log("Veda requested but the custom node is not importable — skipped")
         else:

@@ -81,6 +81,16 @@ export function normalizeAccel(raw) {
   d.teacache = !!raw.teacache;
   const thr = Number(raw.teacache_thresh); d.teacache_thresh = Math.round(Math.min(0.5, Math.max(0.05, Number.isFinite(thr) ? thr : 0.15)) * 1000) / 1000;
   d.compile = !!raw.compile; d.compile_backend = raw.compile_backend === "cudagraphs" ? "cudagraphs" : "inductor";
+  // Spark-H3: replaces the attention core, so VSA/Veda are not stacked on it
+  const pick = (x, list, dflt) => { const v = String(x || "").toLowerCase().trim(); return list.includes(v) ? v : dflt; };
+  d.spark = !!raw.spark;
+  d.spark_mode = pick(raw.spark_mode, ["fidelity", "speed", "custom", "dense"], "fidelity");
+  d.spark_scope = pick(raw.spark_scope, ["target-video", "joint-video"], "target-video");
+  d.spark_dense_backend = pick(raw.spark_dense_backend, ["inherit", "kitchen", "sage", "sdpa"], "inherit");
+  d.spark_strict = !!raw.spark_strict;
+  const r3 = (x, dflt, lo) => { const y = Number(x); return Math.round(Math.min(1, Math.max(lo, Number.isFinite(y) ? y : dflt)) * 1000) / 1000; };
+  d.spark_topk = r3(raw.spark_topk, 0.2, 0.05);
+  d.spark_warmup = r3(raw.spark_warmup, 0.1, 0);
   return d;
 }
 

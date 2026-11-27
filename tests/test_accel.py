@@ -50,6 +50,57 @@ def test_apply_on_none_and_fake_model(monkeypatch):
     assert out is not None and out.opts is not None
 
 
+def test_spark_settings_normalize_and_sig():
+    a = accel.normalize_accel({"spark": 1, "spark_mode": "SPEED", "spark_topk": 0.5,
+                               "spark_scope": "joint-video", "spark_dense_backend": "kitchen"})
+    assert a["spark"] is True and a["spark_mode"] == "speed" and a["spark_topk"] == 0.5
+    assert a["spark_scope"] == "joint-video" and a["spark_dense_backend"] == "kitchen"
+    a = accel.normalize_accel({"spark_mode": "nope", "spark_topk": 9, "spark_warmup": -1,
+                               "spark_scope": "other", "spark_dense_backend": "x"})
+    assert a["spark_mode"] == "fidelity" and a["spark_topk"] == 1.0 and a["spark_warmup"] == 0.0
+    assert a["spark_scope"] == "target-video" and a["spark_dense_backend"] == "inherit"
+    assert "spark" in accel.capabilities()
+    s0 = accel.accel_sig({"accel": {}, "steps": 20})
+    assert s0 != accel.accel_sig({"accel": {"spark": True}, "steps": 20})
+    assert s0 != accel.accel_sig({"accel": {}, "steps": 4})
+
+
+def test_spark_picks_the_node_for_the_gpu_and_passes_the_preset(monkeypatch):
+    import sys
+    import types
+    seen = {}
+
+    class Node:                       # the plugin's shape: FUNCTION = "patch", returns (MODEL,)
+        def patch(self, model, **kw):
+            seen.update(kw)
+            return (model,)
+
+    comfy = types.ModuleType("comfy")
+    comfy.model_management = types.SimpleNamespace(get_torch_device=lambda: "cuda:0")
+    monkeypatch.setitem(sys.modules, "comfy", comfy)
+    monkeypatch.setitem(sys.modules, "comfy.model_management", comfy.model_management)
+    monkeypatch.setitem(sys.modules, "nodes", types.SimpleNamespace(
+        NODE_CLASS_MAPPINGS={"MiniMaxH3SparkAttentionSM86": Node}))
+    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(
+        cuda=types.SimpleNamespace(get_device_capability=lambda dev=None: (8, 6))))
+
+    a = accel.normalize_accel({"spark": True, "spark_mode": "speed", "spark_topk": 0.15})
+    assert accel._spark_class() is Node
+    assert accel._apply_spark("MODEL", a, 8) == "MODEL"
+    assert seen["mode"] == "speed" and seen["steps"] == 8 and seen["topk_ratio"] == 0.15
+    assert seen["warmup_ratio"] == 0.0 and seen["warmup_mode"] == "warmup_ratio"
+    assert seen["sparse_scope"] == "target-video" and seen["dense_backend"] == "inherit"
+    assert seen["strict"] is False and seen["reblock_layout"] == "q_reuse_k"
+
+    # fidelity preset = 20 % dense warmup; an unsupported GPU finds no node
+    a2 = accel.normalize_accel({"spark": True})
+    accel._apply_spark("MODEL", a2, 20)
+    assert seen["warmup_ratio"] == 0.2 and seen["warmup_steps"] == 4
+    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(
+        cuda=types.SimpleNamespace(get_device_capability=lambda dev=None: (8, 0))))
+    assert accel._spark_class() is None
+
+
 def test_accel_sig_changes_with_settings():
     s1 = accel.accel_sig({"accel": {"attention": "kitchen"}})
     s2 = accel.accel_sig({"accel": {"attention": "sage"}})

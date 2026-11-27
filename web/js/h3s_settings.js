@@ -391,21 +391,54 @@ export function installSettings(Editor, { C, h, ICON }) {
       const cmpHint = caps.compile
         ? T("torch.compile через comfy_api (как нода TorchCompileModel). Первый проход медленнее.")
         : T("comfy_api.torch_helpers недоступен в этой сборке ComfyUI.");
+      const sparkHint = caps.spark
+        ? T("Spark-H3 (zechengtang/Spark-H3): адаптивно-блочное разреженное внимание — заменяет ядро внимания DiT, а не плотный бэкенд. Разогрев идёт через «Attention» выше. VSA и Veda на этот прогон не накладываются.")
+        : T("Нет ноды Spark-H3 под эту видеокарту (нужны SM86/SM89/SM120). Поставьте плагин Spark-H3 в custom_nodes и перезапустите ComfyUI.");
+      const sparkModeSel = this.themedSelect({
+        value: a.spark_mode,
+        disabled: !a.spark || !caps.spark,
+        options: [
+          { value: "fidelity", label: T("fidelity — 20 % шагов плотно") },
+          { value: "speed", label: T("speed — без разогрева (быстрее)") },
+          { value: "custom", label: T("custom") },
+          { value: "dense", label: T("dense — выключить") },
+        ],
+        onChange: (v) => put({ spark_mode: v }),
+      });
+      const sparkScopeSel = this.themedSelect({
+        value: a.spark_scope,
+        disabled: !a.spark || !caps.spark,
+        options: [
+          { value: "target-video", label: T("target-video — только генерируемое видео") },
+          { value: "joint-video", label: T("joint-video — вместе с референс-видео (Ref2VA)") },
+        ],
+        onChange: (v) => put({ spark_scope: v }),
+      });
+      const sparkTopk = h("input", { class: "h3l-in sm", type: "number", step: "0.01", min: "0.05", max: "1", value: a.spark_topk });
+      sparkTopk.onchange = () => put({ spark_topk: Number(sparkTopk.value) });
+      const sparkWarm = h("input", { class: "h3l-in sm", type: "number", step: "0.01", min: "0", max: "1", value: a.spark_warmup });
+      sparkWarm.onchange = () => put({ spark_warmup: Number(sparkWarm.value) });
       const thr = h("input", { class: "h3l-in sm", type: "number", step: "0.01", min: "0.05", max: "0.5", value: a.teacache_thresh });
       thr.onchange = () => put({ teacache_thresh: Number(thr.value) });
       return det(T("Ускорение (attention / кэш)"),
         h("div", { class: "h3l-note" }, T("Патчи навешиваются на модель H3 при загрузке (без проводов), в том числе на доработку апскейла. Бэкенды внимания взаимоисключающие.")),
         this.field(T("Attention"), attPills),
+        this.toggle(T("Spark-H3 (блочно-разреженное внимание)"), a.spark, (v) => put({ spark: !!v }), sparkHint, !caps.spark),
+        a.spark && caps.spark ? h("div", null,
+          this.field(T("Профиль Spark"), sparkModeSel),
+          this.field(T("Доля точных блоков (Top-K)"), sparkTopk),
+          this.field(T("Область разрежения"), sparkScopeSel),
+          a.spark_mode === "custom" && a.spark ? this.field(T("Плотный разогрев, доля шагов"), sparkWarm) : null) : null,
         this.toggle(T("Разреженное внимание (VSA)"), a.sparse, (v) => put({ sparse: !!v }),
           caps.sparse ? T("Встроенная нода ComfyUI «Model Sparse Attention»: держит 10 % блоков внимания, короткие последовательности идут плотно. Выигрыш растёт с длиной клипа; качество проверяйте на своём материале.")
             : T("Нет встроенной ноды ComfyUI «Model Sparse Attention» (нужен ComfyUI 0.38+)."),
-          !caps.sparse),
-        a.sparse && caps.sparse ? this.field(T("Доля блоков VSA, %"), (() => {
+          !caps.sparse || a.spark),
+        a.sparse && caps.sparse && !a.spark ? this.field(T("Доля блоков VSA, %"), (() => {
           const sp = h("input", { class: "h3l-in sm", type: "number", step: "1", min: "2", max: "50", value: a.sparse_keep });
           sp.onchange = () => put({ sparse_keep: Number(sp.value) });
           return sp;
         })()) : null,
-        this.toggle(T("Veda Sparse Attention (MiniMax H3)"), a.veda, (v) => put({ veda: !!v }), vedaHint, !caps.veda),
+        this.toggle(T("Veda Sparse Attention (MiniMax H3)"), a.veda, (v) => put({ veda: !!v }), vedaHint, !caps.veda || a.spark),
         caps.veda ? this.field(T("Предиктор Veda"), predSel) : null,
         this.toggle(T("TeaCache (кэш шагов H3)"), a.teacache, (v) => put({ teacache: !!v }), teaHint, !caps.teacache),
         a.teacache && caps.teacache ? this.field(T("порог TeaCache"), thr) : null,
