@@ -242,7 +242,10 @@ def register():
     async def llm_chat(request):
         import asyncio
         from . import h3s_llm
-        b = await request.json()
+        try:
+            b = await request.json()
+        except Exception as e:      # клиент прислал не UTF-8 или не JSON: отвечаем понятно, а не «Server got itself in trouble»
+            return web.json_response({"ok": False, "error": "Тело запроса не разобралось как JSON в UTF-8: " + str(e)}, status=400)
         native_encoder = b.get("backend") == "comfy"
         if native_encoder:
             from . import h3s_comfy_encoder
