@@ -25,7 +25,7 @@ class EncoderError(RuntimeError):
     pass
 
 
-def _api(path, body=None, timeout=15):
+def _api(path, body=None, timeout=60):   # 15 с мало: /object_info на этой сборке отвечает дольше, особенно под загрузкой
     payload = None if body is None else json.dumps(body, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(COMFY_BASE + path, data=payload,
                                  headers={"Content-Type": "application/json"} if payload else {})
@@ -35,14 +35,16 @@ def _api(path, body=None, timeout=15):
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "replace")[:1500]
         raise EncoderError(f"ComfyUI HTTP {exc.code}: {detail}") from exc
+    except TimeoutError as exc:
+        raise EncoderError(f"ComfyUI не ответил за {int(timeout)} с ({path}) — сервер занят: идёт загрузка модели, скан ассетов или рендер. Повторите через минуту.") from exc
     except (urllib.error.URLError, OSError, ValueError) as exc:
-        raise EncoderError(f"ComfyUI: {exc}") from exc
+        raise EncoderError(f"ComfyUI не принял запрос {path}: {exc}") from exc
 
 
 def available_encoders():
     """Only advertise text-generation checkpoints, not H3 diffusion encoders."""
-    info = _api("/object_info/CLIPLoader").get("CLIPLoader", {})
-    textgen = _api("/object_info/TextGenerateV2")
+    info = _api("/object_info/CLIPLoader", timeout=120).get("CLIPLoader", {})
+    textgen = _api("/object_info/TextGenerateV2", timeout=120)
     if "TextGenerateV2" not in textgen:
         raise EncoderError("Узел TextGenerateV2 не установлен в ComfyUI")
     names = info.get("input", {}).get("required", {}).get("clip_name", [[]])[0]

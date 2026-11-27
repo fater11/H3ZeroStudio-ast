@@ -371,7 +371,7 @@ export function installAssist(Editor, { C, h, ICON }) {
     /** Один раз за сессию: связь ассистента из параметров запуска ComfyUI (они главнее проекта). */
     astConnLoad() {
       if (this._astConnP) return this._astConnP;
-      const get = this.host.get || this.host.getRaw;
+      const get = this.host.getRaw || this.host.get;   // getRaw отдаёт тело целиком: маршрут возвращает {values, from}, а get() срезает только data
       this._astConnP = (get ? get("/h3lab/assist/defaults") : Promise.resolve(null))
         .then((r) => {
           const v = (r && r.values) || {};
