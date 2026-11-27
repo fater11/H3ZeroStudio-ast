@@ -392,7 +392,7 @@ export function installSettings(Editor, { C, h, ICON }) {
         ? T("torch.compile через comfy_api (как нода TorchCompileModel). Первый проход медленнее.")
         : T("comfy_api.torch_helpers недоступен в этой сборке ComfyUI.");
       const sparkHint = caps.spark
-        ? T("Spark-H3 (zechengtang/Spark-H3): адаптивно-блочное разреженное внимание — заменяет ядро внимания DiT, а не плотный бэкенд. Разогрев идёт через «Attention» выше. VSA и Veda на этот прогон не накладываются.")
+        ? T("Spark-H3 (zechengtang/Spark-H3): адаптивно-блочное разреженное внимание — заменяет ядро внимания DiT, а не плотный бэкенд. Разогрев идёт через «Attention» выше. VSA и Veda на этот прогон не накладываются, а компилятор памяти ComfyUI отключается на сессию — его граф не умеет записывать патч Spark.")
         : caps.spark_node
           ? T("Нода Spark-H3 есть, но в окружении ComfyUI нет пакета ядер spark-h3-kitchen — без него каждый шаг падает в dense. Поставьте колесо под вашу GPU из релиза Spark-H3 (windows-x86_64-smXX-cu130.zip) и перезапустите ComfyUI.")
           : T("Нет ноды Spark-H3 под эту видеокарту (нужны SM86/SM89/SM120). Поставьте плагин Spark-H3 в custom_nodes и перезапустите ComfyUI.");

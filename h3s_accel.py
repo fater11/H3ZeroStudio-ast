@@ -236,11 +236,43 @@ def _spark_backend_ok():
         return False
 
 
+def _spark_disable_compiler():
+    """Switch ComfyUI's model compiler off — Spark cannot run under its malloc graph.
+
+    Spark replaces the transformer block forward, so the allocation graph ComfyUI records
+    around the diffusion forward no longer matches; on ComfyUI 0.46 the mismatch surfaces as
+    a native stack overflow inside comfy_aimdo («aimdo memory compile error»). The flag is
+    read per forward, so clearing it here is enough; --disable-comfy-compiler is the
+    permanent form of the same thing.
+    """
+    changed = []
+    try:
+        import comfy.memory_management as mem
+        if getattr(mem, "aimdo_enabled", False):
+            mem.aimdo_enabled = False
+            changed.append("aimdo")
+    except Exception:
+        pass
+    try:
+        from comfy.cli_args import args
+        if not getattr(args, "disable_comfy_compiler", False):
+            args.disable_comfy_compiler = True
+            args.disable_cuda_graphs = True
+            changed.append("comfy-compiler")
+    except Exception:
+        pass
+    if changed:
+        log("Spark-H3: Comfy model compiler off for this session (" + ", ".join(changed)
+            + ") — its malloc graph cannot record Spark's block patch")
+    return changed
+
+
 def _apply_spark(model, accel, steps):
     """Patch the model through Spark's own node. `steps` = model evaluations this run."""
     cls = _spark_class()
     if cls is None:
         raise RuntimeError("Spark-H3 has no node for this GPU (SM86/SM89/SM120 only)")
+    _spark_disable_compiler()
     mode = accel["spark_mode"]
     steps = max(1, int(steps or 20))
     # 0.0 is a real preset value (speed), so membership decides, not truthiness

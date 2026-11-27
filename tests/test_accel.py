@@ -102,6 +102,22 @@ def test_spark_picks_the_node_for_the_gpu_and_passes_the_preset(monkeypatch):
     assert accel._spark_class() is None
 
 
+def test_spark_switches_the_comfy_compiler_off(monkeypatch):
+    """Spark patches the block forward; the recorded malloc graph then aborts natively."""
+    import sys
+    import types
+    mem = types.SimpleNamespace(aimdo_enabled=True)
+    cargs = types.SimpleNamespace(disable_comfy_compiler=False, disable_cuda_graphs=False)
+    comfy = types.ModuleType("comfy")
+    monkeypatch.setitem(sys.modules, "comfy", comfy)
+    monkeypatch.setitem(sys.modules, "comfy.memory_management", mem)
+    monkeypatch.setitem(sys.modules, "comfy.cli_args", types.SimpleNamespace(args=cargs))
+    assert accel._spark_disable_compiler() == ["aimdo", "comfy-compiler"]
+    assert mem.aimdo_enabled is False and cargs.disable_comfy_compiler is True
+    assert cargs.disable_cuda_graphs is True
+    assert accel._spark_disable_compiler() == []      # idempotent, logs nothing the second time
+
+
 def test_accel_sig_changes_with_settings():
     s1 = accel.accel_sig({"accel": {"attention": "kitchen"}})
     s2 = accel.accel_sig({"accel": {"attention": "sage"}})
