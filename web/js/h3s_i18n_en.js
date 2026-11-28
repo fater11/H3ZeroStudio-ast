@@ -190,6 +190,8 @@ export default {
   "диалог изменён": "dialogue changed",
   "✓ Готово. Проверьте результат и вставьте его в редактор.": "✓ Ready. Review the suggestion and insert it into the editor.",
   "Ошибка LLM: ": "LLM error: ",
+  "Громкость фильма": "Film loudness",
+  "Нормализация итогового фильма: «peak» поднимает самый громкий сэмпл до −1 dB, LUFS-режимы выравнивают интегральную громкость по BS.1770 (−14 — стриминг, −16…−18 — запас для последующего монтажа). Звук отрезков и выравнивание на стыках не меняются": "Normalization of the finished film: «peak» lifts the loudest sample to −1 dB, the LUFS modes match integrated loudness per BS.1770 (−14 for streaming, −16…−18 leaves headroom for later editing). Take audio and seam matching stay untouched",
   "Собирать ролик сразу после последнего отрезка": "Assemble the film as soon as the last segment is ready",
   "Без цветокоррекции: как только готов последний отрезок, фильм сам собирается из дублей — «Сохранить видео» нажимать не нужно. Выключите, если хотите доснять отрезки и собрать позже.": "Without colour correction: once the last segment is ready the film is assembled from the takes by itself — no «Save video» click needed. Turn it off to shoot more segments and assemble later.",
   "Автосборка не удалась: ": "Auto-assembly failed: ",

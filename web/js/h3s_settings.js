@@ -1027,6 +1027,15 @@ export function installSettings(Editor, { C, h, ICON }) {
         xf,
         this.toggle(T("Выравнивать громкость на стыке"), g.audio_match, (v) => set("audio_match", v), T("RMS у стыка, до ±6 дБ, возврат за 2 с")),
         this.toggle(T("Убирать щелчки на склейках"), g.audio_declick !== false, (v) => set("audio_declick", v), T("Жёсткие склейки звука (новая сцена, футаж, края экспорта и обрезки): плавное затухание ~5 мс с каждой стороны вместо щелчка")),
+        this.field(T("Громкость фильма"), (() => {
+          const modes = [[ "off", "off" ], [ "peak", "peak −1 dB" ], [ "lufs-14", "−14 LUFS" ], [ "lufs-16", "−16 LUFS" ], [ "lufs-18", "−18 LUFS" ]];
+          const cur = String(g.audio_normalize || "off");
+          const sel = h("select", { class: "h3l-sel" }, modes.map(([v, label]) =>
+            h("option", { value: v, selected: cur === v }, label)));
+          sel.onchange = () => set("audio_normalize", sel.value);
+          return sel;
+        })()),
+        h("div", { class: "h3l-note" }, T("Нормализация итогового фильма: «peak» поднимает самый громкий сэмпл до −1 dB, LUFS-режимы выравнивают интегральную громкость по BS.1770 (−14 — стриминг, −16…−18 — запас для последующего монтажа). Звук отрезков и выравнивание на стыках не меняются")),
         h("div", { class: "h3l-lbl" }, T("Картинка на стыках"), h("em", null, T("только готовые кадры — кэш и дубли не меняются"))),
         ...(g.continuation_method === "h3studio"
           ? [h("div", { class: "h3l-note" }, T("Studio: цветовая коррекция в Lab с привязкой к первому отрезку, выравнивание RGB по перекрытию и сглаживание перехода. Обычное выравнивание цвета в этом режиме не применяется."))]

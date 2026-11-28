@@ -605,6 +605,25 @@ def decode_audio(audio_vae, latent_a, normalize=True):
     return {"waveform": normalize_level(audio) if normalize else audio, "sample_rate": audio_out_rate(audio_vae)}
 
 
+def polish_final_audio(out_audio, settings):
+    """Volume normalization of the finished film only: Settings → звук → «Громкость фильма».
+
+    Take audio and the seam matching stay as generated; this runs once on the final mix in
+    both the piped and the classic assembly.
+    """
+    mode = str((settings or {}).get("audio_normalize") or "off").lower().strip()
+    if mode in ("", "off") or not isinstance(out_audio, dict) or out_audio.get("waveform") is None:
+        return out_audio
+    try:
+        from . import h3s_media as media
+        wave = media.normalize_audio(out_audio["waveform"], int(out_audio.get("sample_rate") or 44100), mode)
+        log(f"final audio: normalized to {mode}")
+        return {**out_audio, "waveform": wave}
+    except Exception as e:
+        log(f"final audio: normalization skipped ({e})")
+        return out_audio
+
+
 def _rms(x):
     return float(torch.sqrt(torch.mean(x.float() ** 2))) if x.numel() else 0.0
 
@@ -3266,11 +3285,14 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
             if plan is not None:
                 try:
                     notify("phase", seg=max(0, len(items) - 1), phase="audio_mix")
-                    out_audio = pipe_export.mixed_audio(plan, proj, stitch_audio, normalize_level)
+                    out_audio = polish_final_audio(
+                        pipe_export.mixed_audio(plan, proj, stitch_audio, normalize_level), s)
                     encoder = pipe_export.select_encoder()
                     log(f"FFmpeg pipe: automatic encoder {'NVIDIA NVENC' if encoder == 'nvenc' else 'CPU H.264'}")
                     seam_pipe = core.audio_seam_params(proj)
-                    pipe_key = hashlib.sha256((plan["tag"] + "|" + encoder + "|"
+                    norm_tag = ("" if str(s.get("audio_normalize") or "off").lower() in ("", "off")
+                                else "|norm:" + str(s.get("audio_normalize")).lower())
+                    pipe_key = hashlib.sha256((plan["tag"] + "|" + encoder + "|" + norm_tag + "|"
                                                + json.dumps(seam_pipe, sort_keys=True)).encode()).hexdigest()[:16]
                     pipe_name = f"full_{pipe_key}.mp4"
                     pipe_path = os.path.join(d, pipe_name)
@@ -4357,10 +4379,14 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
     if export_concat_requested and not concat_eligible:
         log("FFmpeg concat: timeline is not stream-copy safe; using frame-exact H3 assembly")
         notify("warn", msg="FFmpeg concat: есть перекрытия, обработка или несовместимые мастера. Используем точную склейку H3.")
+    out_audio = polish_final_audio(out_audio, s)
+    audio_norm_tag = ("" if str(s.get("audio_normalize") or "off").lower() in ("", "off")
+                      else "|norm:" + str(s.get("audio_normalize")).lower())      # cached file must differ
     full_key = hashlib.sha256(("|".join((uk or k) for k, uk in zip(keys[first:], ukeys[first:])) + f"|{images.shape[0]}|{json.dumps(seam, sort_keys=True)}" + (f"|L{level_n}" if level_n else "")
                                 + (f"|studio-colour-v3:{studio_cache_prev or 'uncached'}" if studio_mode else "")
                                + "".join(f"|R{r['key']}" + (f"^{r['up']['key']}" if r.get("up") else "") for r in reg_results)
                                 + ("|ffmpeg-h264-nvenc-p4-v1" if export_encoder == "nvenc" else "")
+                                + audio_norm_tag
                                 + ("|noaudio-v1" if (proj.get("run") or {}).get("no_audio") else "")
                                 + ("|ffconcat-v1" if concat_eligible else "")).encode()).hexdigest()[:16]
     full_name = f"full_{full_key}.mp4"

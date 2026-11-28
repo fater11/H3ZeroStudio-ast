@@ -44,6 +44,73 @@ BT709 = 1          # AVCOL_PRI_BT709 = AVCOL_TRC_BT709 = AVCOL_SPC_BT709
 RANGE_TV = 1       # AVCOL_RANGE_MPEG
 
 
+AUDIO_NORM_MODES = ("off", "peak", "lufs-14", "lufs-16", "lufs-18")
+AUDIO_PEAK_DB = -1.0        # ceiling after any gain, so a loud source never clips
+
+
+def _integrated_lufs(waveform, sample_rate):
+    """ITU-R BS.1770 integrated loudness of a [B,C,L] waveform through ffmpeg's loudnorm, or None."""
+    import json as _json
+    import re
+    import tempfile
+    import wave as _wave
+    import imageio_ffmpeg
+    data = waveform.detach().float().cpu().clamp(-1, 1)
+    if data.ndim == 3:
+        data = data[0]
+    if data.ndim == 1:
+        data = data[None]
+    channels = int(min(2, data.shape[0]))
+    with tempfile.TemporaryDirectory(prefix=".h3zs_loud_") as tmp:
+        wav = os.path.join(tmp, "in.wav")
+        with _wave.open(wav, "wb") as out:
+            out.setnchannels(channels)
+            out.setsampwidth(2)
+            out.setframerate(int(sample_rate))
+            pcm = (data[:channels].T.numpy() * 32767).astype("<i2")
+            out.writeframes(pcm.tobytes())
+        proc = __import__("subprocess").run(
+            [imageio_ffmpeg.get_ffmpeg_exe(), "-nostdin", "-hide_banner",
+             "-i", wav, "-af", "loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=300)
+    match = re.findall(r"\{[^{}]*\"input_i\"[^{}]*\}", proc.stderr or "")
+    if not match:
+        return None
+    try:
+        value = float(_json.loads(match[-1])["input_i"])
+    except (ValueError, KeyError):
+        return None
+    return value if -70.0 < value < 40.0 and value != float("-inf") else None
+
+
+def normalize_audio(waveform, sample_rate, mode="off"):
+    """Bring the finished film to a level. "peak" only caps the top; "lufs-NN" also matches
+    integrated loudness. Take audio is never touched — this runs on the final mix only."""
+    mode = str(mode or "off").lower().strip()
+    if mode not in AUDIO_NORM_MODES or mode == "off" or waveform is None or not waveform.numel():
+        return waveform
+    x = waveform.detach().float().clone()
+    target = None
+    if mode.startswith("lufs-"):
+        try:
+            target = -float(mode.split("-", 1)[1])
+        except ValueError:
+            target = None
+    if target is not None:
+        current = _integrated_lufs(x, sample_rate)
+        if current is not None:
+            x = x * (10.0 ** ((target - current) / 20.0))
+    ceiling = 10.0 ** (AUDIO_PEAK_DB / 20.0)
+    limit = 10.0 ** (30.0 / 20.0)          # never lift near-silence by more than 30 dB
+    peak = float(x.abs().max())
+    if peak > 0:
+        if target is None:                  # "peak": bring the loudest sample to the ceiling
+            x = x * min(ceiling / peak, limit)
+        elif peak > ceiling:                # "lufs": gain to the target, then keep the top clean
+            x = x * (ceiling / peak)
+    return x
+
+
 def nvenc_available():
     """True when PyAV ships h264_nvenc and a CUDA device is there — the export then skips libx264."""
     try:
