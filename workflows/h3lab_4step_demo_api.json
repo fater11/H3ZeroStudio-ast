@@ -1,0 +1,38 @@
+{
+ "1": {
+  "class_type": "ZL_H3ZeroStudioLab",
+  "_meta": {
+   "title": "H3ZeroStudio Lab"
+  },
+  "inputs": {
+   "project": "{\"version\": 1, \"id\": \"project\", \"name\": \"H3ZeroStudio Lab · 4-step demo\", \"settings\": {\"kf_preset\": \"\", \"model_preset\": \"\", \"prompt\": \"\", \"negative\": \"\", \"aspect\": \"16:9\", \"res_mode\": \"mp\", \"ratio\": \"2.39:1\", \"image_ratio\": 0.0, \"kf_fit\": \"crop\", \"kf_pad\": \"blur\", \"megapixels\": 0.5, \"width\": 768, \"height\": 1344, \"steps\": 4, \"cfg\": 1.0, \"sampler\": \"euler\", \"scheduler\": \"simple\", \"shift_video\": 12, \"shift_audio\": 3, \"seed\": 571753828105, \"fps\": 24, \"denoise\": 1.0, \"overlap_blocks\": 1, \"audio_context_sec\": 1.0, \"self_anchor_voice\": false, \"lock_overlap\": true, \"anchor\": 0.0, \"continuation_method\": \"h3studio\", \"continuity_ref\": true, \"continuity_phrase\": \"Continuity: <Picture {n}> is the last frame of the previous shot of this video; continue seamlessly from it and keep characters, faces, clothing, lighting and details consistent with <Picture {n}>.\", \"ref_size\": \"match\", \"cache\": true, \"resume_only\": false, \"audio_seam_lock\": true, \"audio_xfade\": true, \"audio_xfade_sec\": 0.4, \"audio_match\": true, \"audio_declick\": true, \"audio_normalize\": \"off\", \"audio_gate\": false, \"audio_gate_threshold\": -45, \"audio_gate_depth\": 20, \"audio_limiter\": true, \"audio_denoise\": \"off\", \"level_lock\": true, \"level_lock_frames\": 12, \"magnet\": false, \"vram_headroom_gb\": 0.0, \"preview_tiny_vae\": \"auto\", \"preview_max_res\": 512, \"preview_quality\": 80, \"preview_frames\": 48, \"swap_expand\": 16, \"swap_feather\": 12, \"swap_fill_holes\": true, \"swap_temporal_expand\": 2, \"refine_prompt\": \"\", \"export_grain\": 0.0, \"auto_assemble\": true, \"export_preset\": \"\", \"preview_fps\": 0, \"preview_suppress\": true, \"preview_audio\": true, \"verbose_log\": true, \"quality\": \"final\", \"final_mode\": \"full\", \"piflow_steps\": 0, \"piflow_lora2\": \"\", \"piflow_lora4\": \"\", \"video_ramp_frames\": 0, \"draft_scale\": 0.5, \"lowhigh_low_steps\": 0, \"lowhigh_scale\": 0.6, \"lowhigh_denoise\": 0.65, \"high_sigma_schedule\": \"default\", \"draft_steps\": 0, \"refine_sigma\": 0.4, \"refine_schedule_mode\": \"sigma\", \"refine_denoise\": 0.3, \"refine_identity_images\": false, \"refine_steps\": 0, \"refine_seed\": -1, \"upscale_method\": \"learned\", \"upscale_rev\": 5, \"seg_upscale\": {\"method\": \"latent\", \"mp\": 2.09, \"sigma\": 0.4}, \"upscale_chunk_sec\": 5.0, \"upscale_chunk_overlap\": 1, \"upscale_profiles\": {\"latent\": {\"sigma\": 0.4, \"steps\": 0, \"sampler\": \"\", \"scheduler\": \"\", \"sigmas\": \"\", \"chunk\": true, \"chunk_sec\": 5.0, \"chunk_overlap\": 1, \"mp\": 2.09}, \"tiles\": {\"sigma\": 0.6, \"steps\": 0, \"sampler\": \"\", \"scheduler\": \"\", \"sigmas\": \"\", \"chunk\": false, \"chunk_sec\": 5.0, \"chunk_overlap\": 1, \"mp\": 2.09}}, \"upscale_gen\": {\"mode\": \"project\", \"model\": \"\", \"loras\": []}, \"upscale_model\": \"\", \"accel\": {\"attention\": \"kitchen\", \"sparse\": false, \"sparse_keep\": 10, \"veda\": false, \"veda_predictor\": \"\", \"teacache\": false, \"teacache_thresh\": 0.15, \"compile\": false, \"compile_backend\": \"inductor\", \"spark\": false, \"spark_mode\": \"fidelity\", \"spark_topk\": 0.2, \"spark_warmup\": 0.1, \"spark_scope\": \"target-video\", \"spark_dense_backend\": \"inherit\", \"spark_strict\": false}, \"memsave\": {\"mode\": \"auto\", \"chunks\": 2, \"threshold\": 4096}, \"draft_sampler\": \"\", \"draft_scheduler\": \"\", \"draft_cfg\": 0.0, \"refine_sampler\": \"\", \"refine_scheduler\": \"\", \"refine_cfg\": 0.0, \"sigmas\": \"\", \"draft_sigmas\": \"\", \"refine_sigmas\": \"\", \"settings_scope\": \"project\"}, \"assets\": [], \"segments\": [{\"id\": \"s1\", \"name\": \"1. Старт\", \"color\": 0, \"frames\": 124, \"prompt\": \"x\", \"refs\": [], \"cards\": [], \"link\": \"extend\", \"gap\": 0, \"overlap_blocks\": 0, \"overrides\": {}, \"takes\": [], \"active_take\": null, \"locked\": false, \"freeze\": null, \"pin\": null, \"source\": null, \"upscale\": null, \"approved\": false, \"kf\": null, \"ar\": null, \"model_preset\": \"\", \"fr\": null}], \"audio\": {\"clips\": [], \"video_volume\": 1.0, \"input_ref\": null}, \"markers\": [], \"end\": 0, \"end_mode\": \"fixed\", \"run\": {\"upto\": -1, \"only\": -1, \"kind\": \"\", \"region\": \"\"}, \"regions\": [], \"stats\": null, \"result\": null, \"cards\": {}, \"assistant\": {\"chats\": [], \"active\": \"\", \"presets\": [], \"preset\": \"\", \"style_defs\": [], \"style_deleted\": [], \"cfg\": {\"mode\": \"chat\", \"temperature\": 0.7, \"top_p\": 0.9, \"thinking\": true, \"sampling\": {\"thinking\": {\"temperature\": 1.0, \"top_p\": 0.95, \"top_k\": 20, \"min_p\": 0.05, \"presence_penalty\": 0.0, \"repetition_penalty\": 1.0}, \"plain\": {\"temperature\": 0.7, \"top_p\": 0.8, \"top_k\": 20, \"min_p\": 0.0, \"presence_penalty\": 1.5, \"repetition_penalty\": 1.0}}, \"max_tokens\": 32768, \"sys\": \"\", \"ctx_refs\": true, \"ctx_neighbours\": false, \"styles\": [], \"engine_defaults\": false, \"show_reasoning\": true, \"stream_timeout\": 600, \"unload_on_generate\": true, \"unload_endpoint\": \"\", \"auto_unload\": false, \"auto_unload_delay\": 300, \"backend\": \"api\", \"comfy_encoder\": \"\", \"api_base\": \"http://127.0.0.1:1234/v1\", \"api_key\": \"\", \"api_model\": \"\"}}, \"model_presets\": {}, \"control\": {\"row\": false, \"on\": true, \"mode\": \"depth\", \"strength\": 1.0, \"start\": 0.0, \"end\": 1.0, \"params\": {\"canny_lo\": 0.4, \"canny_hi\": 0.8, \"depth_model\": \"small\", \"pose_hands\": true, \"pose_face\": true}, \"clips\": []}}",
+   "global_seed": -1,
+   "assembly_mode": "Обычный (IMAGE)"
+  }
+ },
+ "2": {
+  "class_type": "PreviewImage",
+  "_meta": {
+   "title": "Превью кадров"
+  },
+  "inputs": {
+   "images": [
+    "1",
+    0
+   ]
+  }
+ },
+ "3": {
+  "class_type": "SaveAudio",
+  "_meta": {
+   "title": "Звук"
+  },
+  "inputs": {
+   "audio": [
+    "1",
+    1
+   ],
+   "filename_prefix": "h3lab_demo"
+  }
+ }
+}
