@@ -18,7 +18,9 @@ def test_save_queues_no_sampling_assembly_for_current_segments():
     assert "this.host.exportVideo({ ...body, source: video })" in menus
     assert "Never silently export an outdated MP4" in menus
     assert "galleryFinal?.video" not in menus
-    assert 'this.generate({ operation: "assemble", upto: pending.upto })' in editor
+    # the editor asks for the piped encoder unless the dialog already decided
+    assert 'this.generate({ operation: "assemble", upto: pending.upto,' in editor
+    assert 'pipe: typeof pending.pipe === "boolean" ? pending.pipe : true' in editor
     assert "this.continuePendingVideoSave(info)" in editor  # node-output fallback
     assert '(region || audio || face) ? "full" : "generate"' in editor
     assert 'operation: "generate" }; this.flushSave();' in editor
