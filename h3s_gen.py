@@ -3259,6 +3259,10 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
             if plan and plan.get("no_colour"):
                 log("потоковый экспорт: цветокоррекция не подготовлена для отрезков "
                     + ", ".join(str(i + 1) for i in plan["no_colour"]) + " — они поедут без цветового слоя")
+            if plan and plan.get("frozen_preview"):
+                log("потоковый экспорт: у зафиксированных отрезков "
+                    + ", ".join(str(i + 1) for i in plan["frozen_preview"])
+                    + " нет мастера — беру зафиксированную копию (прокси-кодирование вместо 4:4:4)")
             if plan is not None:
                 try:
                     notify("phase", seg=max(0, len(items) - 1), phase="audio_mix")

@@ -79,6 +79,29 @@ def test_pipe_respects_end_marker_without_loading_later_scene(tmp_path, monkeypa
     assert media.video_info(destination)["frames"] == 18
 
 
+def test_frozen_take_streams_from_its_frozen_copy(tmp_path, monkeypatch):
+    """Мастер мог быть удалён, а frozen/seg_<key>.mp4 — сохранён: сборка берёт его, а не отказывается."""
+    from h3s import h3s_core as core
+    from h3s import h3s_store as store
+
+    p = core.normalize_project(project(id="pipe_frozen"))
+    items = core.plan(p)
+    frames = int(items[0]["frames"])
+    frozen = str(tmp_path / "seg_held.mp4")
+    media.write_mp4(frozen, torch.zeros(frames, 64, 96, 3), fps=24)
+    p["segments"][0]["freeze"] = {"key": "held",
+                                  "video": {"filename": "seg_held.mp4",
+                                            "subfolder": "h3labstudio/pipe_frozen/frozen"}}
+    monkeypatch.setattr(pipe, "_frozen_path", lambda ref: frozen
+                        if (ref or {}).get("filename") == "seg_held.mp4" else None)
+    monkeypatch.setattr(store, "master_path", lambda d, k, w, h: str(tmp_path / "gone.mp4"))
+    monkeypatch.setattr(store, "load_wave", lambda d, k: (torch.zeros(2, 48000 * 10), 48000))
+    plan, reason = pipe.prepare(str(tmp_path), p, ["held"], items[:1], 96, 64, 24)
+    assert plan, reason                      # зафиксированный дубль больше не блокирует поток
+    assert plan["sources"][0]["path"] == frozen
+    assert plan["frozen_preview"] == [0]
+
+
 def test_stream_export_nvenc_on_real_gpu(tmp_path):
     first = torch.zeros(8, 360, 640, 3)
     path = str(tmp_path / "gpu_source.mp4")
@@ -100,7 +123,6 @@ def test_pipe_preflight_rejects_complex_processing_without_losing_modules(tmp_pa
         ("ar", {"enabled": True}),
         ("upscale", {"method": "learned"}),
         ("source", {"denoise": 0, "file": "footage.mp4"}),
-        ("freeze", {"key": "held_take"}),
     ):
         p = core.normalize_project(project(id="pipe_preflight_" + field))
         p["segments"][0][field] = value

@@ -42,14 +42,29 @@ def select_encoder():
     return "cpu"
 
 
+def _frozen_path(ref):
+    """Absolute path of a frozen preview (`frozen/seg_<key>.mp4`) or None."""
+    try:
+        import folder_paths
+        name = os.path.basename(str((ref or {}).get("filename") or ""))
+        sub = str((ref or {}).get("subfolder") or "")
+        if not name or not sub:
+            return None
+        root = os.path.realpath(folder_paths.get_output_directory())
+        path = os.path.realpath(os.path.join(root, sub, name))
+        if os.path.commonpath([root, path]) != root or not os.path.isfile(path):
+            return None
+        return path
+    except Exception:
+        return None
+
+
 def prepare(project_dir, project, keys, items, width, height, fps, studio_mode=False):
     """Return (plan, reason). Never touch incomplete / visually modified takes."""
     if not items or len(keys) != len(items):
         return None, "неполная цепочка отрезков"
     if any(int(it.get("gap") or 0) for it in items):
         return None, "на таймлайне есть пустые интервалы"
-    if any(bool(project["segments"][it["index"]].get("freeze")) for it in items):
-        return None, "есть зафиксированные дубли"
     from . import h3s_core as core
     if core.lock_clips(project):
         return None, "звуковая дорожка с блокировкой требует совместимой сборки"
@@ -61,8 +76,16 @@ def prepare(project_dir, project, keys, items, width, height, fps, studio_mode=F
                 or segment.get("fr") or segment.get("ar")):
             return None, f"отрезок {i + 1} имеет дополнительную обработку"
         filename = store.master_path(project_dir, key, width, height)
+        frozen_copy = None
+        if not os.path.isfile(filename) and segment.get("freeze"):
+            # «Зафиксировать» keeps the latent and the editor MP4 under frozen/, out of reach of
+            # «Очистить кэш», while takes/<key>/ may have been pruned since. That copy holds the
+            # same scene at the same size, so a streamed assembly can still use it — it is the
+            # proxy encode rather than the 4:4:4 master, and the only copy left.
+            frozen_copy = _frozen_path((segment.get("freeze") or {}).get("video"))
+            filename = frozen_copy or filename
         if not os.path.isfile(filename):
-            return None, f"нет мастер-файла отрезка {i + 1}"
+            return None, f"нет мастер-файла отрезка {i + 1}" + (" и нет зафиксированной копии" if segment.get("freeze") else "")
         try:
             meta = media.video_info(filename, fps)
         except (OSError, ValueError) as exc:
@@ -91,7 +114,7 @@ def prepare(project_dir, project, keys, items, width, height, fps, studio_mode=F
                 prev_studio = colour_key
         sources.append({"path": filename, "overlap": int(it.get("overlap") or 0) if i else 0,
                         "link": it.get("link", "start"), "frames": int(it["frames"]),
-                        "colour_key": colour_key})
+                        "colour_key": colour_key, "frozen_preview": bool(frozen_copy)})
     total = sum(s["frames"] - s["overlap"] for s in sources)
     end = int(project.get("end") or 0)
     if 0 < end < total:
@@ -104,7 +127,8 @@ def prepare(project_dir, project, keys, items, width, height, fps, studio_mode=F
          "version": "ffmpeg-pipe-v1"}, sort_keys=True).encode()).hexdigest()[:16]
     return {"sources": sources, "waves": waves, "rate": rate, "frames": total, "fps": fps,
             "width": width, "height": height, "studio": bool(studio_mode), "tag": tag,
-            "project_dir": project_dir, "no_colour": no_colour}, ""
+            "project_dir": project_dir, "no_colour": no_colour,
+            "frozen_preview": [i for i, s in enumerate(sources) if s.get("frozen_preview")]}, ""
 
 
 def mixed_audio(plan, project, stitch_audio, normalize_level):
