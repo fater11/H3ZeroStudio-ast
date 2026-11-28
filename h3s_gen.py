@@ -3243,7 +3243,13 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
              f"{' ov ' + str(itj['overlap']) if j and itj['overlap'] else ''} · {'untouched' if j < first else 'cache' if cached[j] else 'generate'} {kj}")
     # Save-only scene streaming: prepared take masters/Studio RGB8 cache ->
     # FFmpeg stdin. Never allocate the full decoded-frame or stitch RGB chain.
-    if operation == "assemble" and (proj.get("run") or {}).get("export_pipe") is True:
+        # A plain assembly (no colour layer to prepare) defaults to the piped encoder: it reads the
+    # take masters segment by segment instead of decoding the whole film into one float32 tensor
+    # (235 s of 768x1344 ≈ 70 GB of RAM and minutes of copies) and re-encoding it.
+    requested_pipe = (proj.get("run") or {}).get("export_pipe")
+    if requested_pipe is None:
+        requested_pipe = operation == "assemble" and not studio_mode
+    if operation == "assemble" and requested_pipe is True:
         reason = ""
         if first or len(items) != len(all_items) or any(ukeys) or any(frozen) or reg_plans:
             reason = "частичная сборка, апскейл или сложный монтаж"
@@ -3975,19 +3981,23 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
             vlog(f"segment {i + 1}: export preparation reused editor preview (skip redundant MP4 encode)")
         # Read-only measurements, computed on the delivered frames (not the carried overlap).
         # The baseline resets after a cut; no samples or cache keys are modified.
-        try:
-            skip = int(it["overlap"]) if i > 0 and it["link"] == "extend" else 0
-            sig = diagnostics.clip_signature(frames, skip=skip)
-            if sig is not None:
-                if drift_reference is None or it["link"] != "extend":
-                    drift_reference, drift_reference_index = sig, i
-                relative = diagnostics.compare_signatures(drift_reference, sig)
-                res["drift"] = {"baseline_segment": drift_reference_index, "signature": sig, "relative": relative}
-                vlog(f"visual drift seg {i + 1} vs seg {drift_reference_index + 1}: "
-                     f"brightness {relative['luma_delta']:+.3f}, contrast x{relative['contrast_ratio']}, "
-                     f"detail x{relative['detail_ratio']} (diagnostic only)")
-        except Exception as exc:
-            vlog(f"visual drift diagnostics skipped for segment {i + 1}: {exc}")
+        # Colour comparison feeds the colour layer only: with it switched off (assemble without
+        # цветокоррекция) the measurement is pointless — and it is expensive, every segment scans
+        # all of its frames on the CPU.
+        if studio_mode:
+            try:
+                skip = int(it["overlap"]) if i > 0 and it["link"] == "extend" else 0
+                sig = diagnostics.clip_signature(frames, skip=skip)
+                if sig is not None:
+                    if drift_reference is None or it["link"] != "extend":
+                        drift_reference, drift_reference_index = sig, i
+                    relative = diagnostics.compare_signatures(drift_reference, sig)
+                    res["drift"] = {"baseline_segment": drift_reference_index, "signature": sig, "relative": relative}
+                    vlog(f"visual drift seg {i + 1} vs seg {drift_reference_index + 1}: "
+                         f"brightness {relative['luma_delta']:+.3f}, contrast x{relative['contrast_ratio']}, "
+                         f"detail x{relative['detail_ratio']} (diagnostic only)")
+            except Exception as exc:
+                vlog(f"visual drift diagnostics skipped for segment {i + 1}: {exc}")
         if i > first and it["link"] == "extend" and len(seg_frames) > 1:   # seam rating of the join on the left
             try:
                 from . import h3s_seams
@@ -4320,9 +4330,11 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         log("export: run.no_audio — the MP4 is written without an audio track")
         out_audio = None
     # Export codec does not affect any cached H3 latents, takes or colour frames.
-    export_encoder = (proj.get("run") or {}).get("export_encoder") or "cpu"
+    export_encoder = (proj.get("run") or {}).get("export_encoder") or ""
     if export_encoder not in ("cpu", "nvenc"):
-        export_encoder = "cpu"
+        export_encoder = ""
+    if not export_encoder:      # auto: NVENC is ~10x faster than libx264 and falls back on failure
+        export_encoder = "nvenc" if media.nvenc_available() else "cpu"
     # FFmpeg's concat demuxer can copy original compressed takes only for
     # hard-cut, unfiltered, same-canvas timelines. In every other case use the
     # frame-exact H3 compositor (overlap, grading, gaps and regions are material).

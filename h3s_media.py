@@ -44,6 +44,16 @@ BT709 = 1          # AVCOL_PRI_BT709 = AVCOL_TRC_BT709 = AVCOL_SPC_BT709
 RANGE_TV = 1       # AVCOL_RANGE_MPEG
 
 
+def nvenc_available():
+    """True when PyAV ships h264_nvenc and a CUDA device is there — the export then skips libx264."""
+    try:
+        import av
+        import torch
+        return "h264_nvenc" in av.codecs_available and torch.cuda.is_available()
+    except Exception:
+        return False
+
+
 def video_stream(container, w, h, rate, options=None, pix_fmt="yuv420p", encoder="cpu"):
     """H.264, tagged BT.709 TV range. NVENC uses FFmpeg libavcodec on the NVIDIA GPU."""
     import av
