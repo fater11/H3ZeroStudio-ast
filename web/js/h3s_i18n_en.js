@@ -191,6 +191,8 @@ export default {
   "✓ Готово. Проверьте результат и вставьте его в редактор.": "✓ Ready. Review the suggestion and insert it into the editor.",
   "Ошибка LLM: ": "LLM error: ",
   "Громкость фильма": "Film loudness",
+  "Шумоподавление (спектральное)": "Spectral noise reduction",
+  "Спектральный гейт вычитает ровный фон по частотам: light — мягко, medium — для шумных исходников, strong — агрессивно (на музыке слышны артефакты). Работает на итоговом миксе до гейта в паузах и нормализации": "Spectral gate subtracts a steady floor per frequency: light is gentle, medium suits noisy sources, strong is aggressive (audible artefacts on music). Runs on the final mix before the pause gate and the level step",
   "Приглушать фон в паузах (гейт)": "Mute the floor in pauses (gate)",
   "Что тише порога, то считается паузой и уходит вниз на глубину; речь не трогается. Порог — RMS в дБ, поэтому реальный фон читается примерно на 10 дБ ниже того, что видно по пикам": "Anything below the threshold counts as a pause and drops by the depth; speech stays untouched. The threshold is RMS in dB, so a floor reads about 10 dB lower than its peaks",
   "порог, dB RMS": "threshold, dB RMS",

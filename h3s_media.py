@@ -73,6 +73,52 @@ def _per_sample(gain, size, n, smooth=True):
     return expanded[..., :n]
 
 
+AUDIO_DENOISE_MODES = {"light": (1.2, 0.35), "medium": (2.0, 0.25), "strong": (3.0, 0.15)}   # alpha, gain floor
+
+
+def audio_denoise(waveform, sample_rate, mode="medium", chunk_sec=30.0):
+    """Spectral gating: estimate the steady noise per frequency, subtract it, leave the rest.
+
+    Frames are processed in 30 s chunks so memory stays bounded on a 10-minute film. The
+    gain floor keeps a little of the floor in place — full subtraction sounds like a robot.
+    """
+    params = AUDIO_DENOISE_MODES.get(str(mode).lower().strip())
+    x = waveform.detach().float()
+    if not params or not x.numel() or x.shape[-1] < 4096:
+        return waveform
+    alpha, floor = params
+    n_fft = 2048 if int(sample_rate) >= 32000 else 1024
+    hop = n_fft // 4
+    window = torch.hann_window(n_fft, device=x.device, dtype=x.dtype)
+    pad = n_fft
+    out = torch.empty_like(x)
+    chunk = max(int(int(sample_rate) * float(chunk_sec)), n_fft * 4)
+    for start in range(0, int(x.shape[-1]), chunk):
+        stop = min(int(x.shape[-1]), start + chunk)
+        piece = x[..., start:stop]
+        flat = piece.reshape(-1, piece.shape[-1])      # stft wants 1D/2D: treat batch*channel as rows
+        spec = torch.stft(flat, n_fft, hop_length=hop, window=window, return_complex=True,
+                          center=True, pad_mode="reflect", onesided=True)
+        mag = spec.abs()
+        # per-bin noise estimate: quietest ~10 % of frames at that frequency
+        noise = torch.quantile(mag, 0.10, dim=-1, keepdim=True)
+        ratio = (alpha * noise).clamp_min(1e-9) / mag.clamp_min(1e-9)
+        gain = (1.0 - ratio.pow(2)).clamp(floor, 1.0)
+        # smooth over time and frequency: no isolated spikes left behind ("musical noise")
+        gain = torch.nn.functional.avg_pool1d(gain, 3, stride=1, padding=1)
+        kernel_t = 3
+        if int(gain.shape[-1]) > kernel_t:
+            rolled = torch.nn.functional.avg_pool1d(gain.transpose(-1, -2), kernel_t, stride=1, padding=1)
+            gain = rolled.transpose(-1, -2)
+        cleaned = torch.istft(spec * gain, n_fft, hop_length=hop, window=window, center=True,
+                              length=int(piece.shape[-1]))
+        if cleaned.shape[-1] < int(piece.shape[-1]):
+            cleaned = torch.nn.functional.pad(cleaned, (0, int(piece.shape[-1]) - int(cleaned.shape[-1])))
+        out[..., start:stop] = cleaned.reshape(piece.shape)[..., : int(piece.shape[-1])]
+        del spec, mag, gain, cleaned
+    return out.to(waveform.dtype)
+
+
 def audio_gate(waveform, sample_rate, threshold_db=AUDIO_GATE_DB, depth_db=20.0):
     """Expander for pauses: below the threshold the signal is pulled down by depth dB.
 

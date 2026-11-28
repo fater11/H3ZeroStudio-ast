@@ -100,3 +100,19 @@ def test_limiter_is_a_no_op_below_the_ceiling():
     wave = _sine(0.25)
     out = media.normalize_audio(wave, 48000, "off", gate=None, limiter=True)
     assert torch.allclose(out, wave, atol=1e-6)
+
+def test_denoise_lifts_the_floor_and_spares_speech():
+    wave, on = _speech_with_floor(noise=0.03)
+    out = media.audio_denoise(wave, 48000, "medium")
+    speech_before, speech_after = _rms_db(wave[0, 0][on]), _rms_db(out[0, 0][on])
+    floor_before, floor_after = _rms_db(wave[0, 0][~on]), _rms_db(out[0, 0][~on])
+    assert abs(speech_after - speech_before) < 1.0          # речь на месте
+    assert floor_before - floor_after > 2.0                 # фон вычтен
+    assert (speech_after - floor_after) > (speech_before - floor_before) + 2.0
+
+
+def test_denoise_modes_are_ordered_and_off_is_a_no_op():
+    wave, _on = _speech_with_floor(noise=0.03)
+    floors = [_rms_db(media.audio_denoise(wave, 48000, m)[0, 0][~_on]) for m in ("light", "medium", "strong")]
+    assert floors[0] > floors[1] > floors[2]            # сильнее режим — ниже фон
+    assert torch.equal(media.audio_denoise(wave, 48000, "off"), wave)

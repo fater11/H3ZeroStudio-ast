@@ -1041,6 +1041,15 @@ export function installSettings(Editor, { C, h, ICON }) {
         g.audio_gate ? h("div", { class: "h3l-grid2" },
           num("audio_gate_threshold", T("порог, dB RMS"), 1, -80, -10),
           num("audio_gate_depth", T("глубина, dB"), 1, 3, 40)) : null,
+        this.field(T("Шумоподавление (спектральное)"), (() => {
+          const modes = [["off", "off"], ["light", "light"], ["medium", "medium"], ["strong", "strong"]];
+          const cur = String(g.audio_denoise || "off");
+          const sel = h("select", { class: "h3l-sel" }, modes.map(([v, label]) =>
+            h("option", { value: v, selected: cur === v }, label)));
+          sel.onchange = () => set("audio_denoise", sel.value);
+          return sel;
+        })()),
+        h("div", { class: "h3l-note" }, T("Спектральный гейт вычитает ровный фон по частотам: light — мягко, medium — для шумных исходников, strong — агрессивно (на музыке слышны артефакты). Работает на итоговом миксе до гейта в паузах и нормализации")),
         this.toggle(T("Лимитер пиков"), g.audio_limiter !== false, (v) => set("audio_limiter", !!v),
           T("Мягко опускает только то, что выше −1 dB, с отпусканием ~80 мс — вместо общего понижения всего фильма из-за одного горячего пика")),
         h("div", { class: "h3l-lbl" }, T("Картинка на стыках"), h("em", null, T("только готовые кадры — кэш и дубли не меняются"))),

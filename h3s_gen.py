@@ -605,6 +605,17 @@ def decode_audio(audio_vae, latent_a, normalize=True):
     return {"waveform": normalize_level(audio) if normalize else audio, "sample_rate": audio_out_rate(audio_vae)}
 
 
+def audio_cache_tag(settings):
+    """Every audio step belongs in the cache key, or switching a switch returns the old file."""
+    s = settings or {}
+    return "|a:" + ",".join([
+        str(s.get("audio_normalize") or "off").lower(),
+        "g" if s.get("audio_gate") else "-",
+        f"{s.get('audio_gate_threshold', -45)}/{s.get('audio_gate_depth', 20)}",
+        "l" if s.get("audio_limiter", True) is not False else "-",
+        str(s.get("audio_denoise") or "off").lower()])
+
+
 def polish_final_audio(out_audio, settings):
     """Volume normalization of the finished film only: Settings → звук → «Громкость фильма».
 
@@ -616,14 +627,21 @@ def polish_final_audio(out_audio, settings):
     gate = ({"threshold": float(s.get("audio_gate_threshold", -45)), "depth": float(s.get("audio_gate_depth", 20))}
             if s.get("audio_gate") else None)
     limiter = s.get("audio_limiter", True) is not False
-    if (mode in ("", "off") and not gate and not limiter) or not isinstance(out_audio, dict) \
-            or out_audio.get("waveform") is None:
+    denoise = str(s.get("audio_denoise") or "off").lower().strip()
+    if denoise in ("", "off"):
+        denoise = ""
+    if (mode in ("", "off") and not gate and not limiter and not denoise) \
+            or not isinstance(out_audio, dict) or out_audio.get("waveform") is None:
         return out_audio
     try:
         from . import h3s_media as media
-        wave = media.normalize_audio(out_audio["waveform"], int(out_audio.get("sample_rate") or 44100),
-                                     mode, gate=gate, limiter=limiter)
+        wave = out_audio["waveform"]
+        rate = int(out_audio.get("sample_rate") or 44100)
+        if denoise:
+            wave = media.audio_denoise(wave, rate, denoise)      # before the gate: it must not see the noise
+        wave = media.normalize_audio(wave, rate, mode, gate=gate, limiter=limiter)
         log("final audio: " + ", ".join(x for x in (
+            f"denoise {denoise}" if denoise else "",
             f"gate {gate['threshold']:g} dB / -{gate['depth']:g} dB" if gate else "",
             f"level {mode}" if mode not in ("", "off") else "",
             "peak limiter" if limiter else "") if x))
@@ -3299,8 +3317,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
                     encoder = pipe_export.select_encoder()
                     log(f"FFmpeg pipe: automatic encoder {'NVIDIA NVENC' if encoder == 'nvenc' else 'CPU H.264'}")
                     seam_pipe = core.audio_seam_params(proj)
-                    norm_tag = ("" if str(s.get("audio_normalize") or "off").lower() in ("", "off")
-                                else "|norm:" + str(s.get("audio_normalize")).lower())
+                    norm_tag = audio_cache_tag(s)
                     pipe_key = hashlib.sha256((plan["tag"] + "|" + encoder + "|" + norm_tag + "|"
                                                + json.dumps(seam_pipe, sort_keys=True)).encode()).hexdigest()[:16]
                     pipe_name = f"full_{pipe_key}.mp4"
@@ -4389,8 +4406,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
         log("FFmpeg concat: timeline is not stream-copy safe; using frame-exact H3 assembly")
         notify("warn", msg="FFmpeg concat: есть перекрытия, обработка или несовместимые мастера. Используем точную склейку H3.")
     out_audio = polish_final_audio(out_audio, s)
-    audio_norm_tag = ("" if str(s.get("audio_normalize") or "off").lower() in ("", "off")
-                      else "|norm:" + str(s.get("audio_normalize")).lower())      # cached file must differ
+    audio_norm_tag = audio_cache_tag(s)
     full_key = hashlib.sha256(("|".join((uk or k) for k, uk in zip(keys[first:], ukeys[first:])) + f"|{images.shape[0]}|{json.dumps(seam, sort_keys=True)}" + (f"|L{level_n}" if level_n else "")
                                 + (f"|studio-colour-v3:{studio_cache_prev or 'uncached'}" if studio_mode else "")
                                + "".join(f"|R{r['key']}" + (f"^{r['up']['key']}" if r.get("up") else "") for r in reg_results)
