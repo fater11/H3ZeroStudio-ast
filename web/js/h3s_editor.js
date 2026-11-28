@@ -2015,7 +2015,7 @@ export class H3Editor {
 
   // ------------------------------------------------------------------ run
   /** upto: -1 = whole project, i = only segments 0..i (cached ones are reused). */
-  async generate({ upto = -1, only = -1, kind = "", region = "", audio = null, face = null, operation = "", colour = undefined } = {}) {
+  async generate({ upto = -1, only = -1, kind = "", region = "", audio = null, face = null, operation = "", colour = undefined, pipe = undefined } = {}) {
     if (this.run.active) return;
     if (!this.p.segments.length) return this.toast(T("Добавьте хотя бы один отрезок"), true);
     const hard = C.estimate(this.p).warnings.filter((w) => [T("максимум"), "максимум"].some((x) => w.includes(x)));
@@ -2033,7 +2033,7 @@ export class H3Editor {
     const clientToken = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : ("ct" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8));
     try { sessionStorage.setItem("h3ls.inflight", JSON.stringify({ token: clientToken, project: this.p.id, t: Date.now() })); } catch (e) {}
     this._genCtx = { op, upto: region ? -1 : upto >= 0 && upto < this.p.segments.length - 1 ? upto : -1, only: region ? -1 : only >= 0 ? only : -1, region };
-    this.p.run = { upto: region ? -1 : upto >= 0 && upto < this.p.segments.length - 1 ? upto : -1, only: region ? -1 : only >= 0 ? only : -1, kind: C.RUN_KINDS.includes(kind) ? kind : "", region, operation: op, client_token: clientToken, ...(op === "full" && this._pendingVideoSave ? { export_full: true } : {}), ...(typeof colour === "boolean" ? { export_colour: colour } : {}), ...(this._pendingVideoSave ? { export_colour: this._pendingVideoSave.colour, export_stream: this._pendingVideoSave.stream, export_pipe: this._pendingVideoSave.pipe } : {}), ...(audio ? { audio } : {}), ...(face ? { face } : {}) };
+    this.p.run = { upto: region ? -1 : upto >= 0 && upto < this.p.segments.length - 1 ? upto : -1, only: region ? -1 : only >= 0 ? only : -1, kind: C.RUN_KINDS.includes(kind) ? kind : "", region, operation: op, client_token: clientToken, ...(op === "full" && this._pendingVideoSave ? { export_full: true } : {}), ...(typeof colour === "boolean" ? { export_colour: colour } : {}), ...(typeof pipe === "boolean" ? { export_pipe: pipe } : {}), ...(this._pendingVideoSave ? { export_colour: this._pendingVideoSave.colour, export_stream: this._pendingVideoSave.stream, export_pipe: this._pendingVideoSave.pipe } : {}), ...(audio ? { audio } : {}), ...(face ? { face } : {}) };
     this.flushSave();
     this.pendingSigs = C.segmentSigs(this.p, this.p.run.kind || null);
     this.pendingRegionSig = Object.fromEntries((this.p.regions || []).map((r) => [r.id, C.regionSig(this.p, r, this.p.run.kind || null)]));
@@ -2289,7 +2289,7 @@ export class H3Editor {
     if (!this.p.segments.length || this.p.segments.length > this.items().length) return;
     if (!this.p.segments.every((s) => s.result?.key)) return;               // ещё не все отрезки готовы
     Promise.resolve()
-      .then(() => this.generate({ operation: "assemble", colour: false }))
+      .then(() => this.generate({ operation: "assemble", colour: false, pipe: true }))
       .catch((e) => this.toast(T("Автосборка не удалась: ") + (e.message || e), true));
   }
 
@@ -2341,7 +2341,8 @@ export class H3Editor {
       pending.stage = "assemble";
       Promise.resolve().then(() => {
         if (this._pendingVideoSave === pending)
-          this.generate({ operation: "assemble", upto: pending.upto }).catch((e) => pending.fail(e));
+          this.generate({ operation: "assemble", upto: pending.upto,
+            pipe: typeof pending.pipe === "boolean" ? pending.pipe : true }).catch((e) => pending.fail(e));
       });
     } else if (info.operation === "assemble" || info.operation === "full") {
       pending.finishing = true;

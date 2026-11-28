@@ -3243,13 +3243,11 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
              f"{' ov ' + str(itj['overlap']) if j and itj['overlap'] else ''} · {'untouched' if j < first else 'cache' if cached[j] else 'generate'} {kj}")
     # Save-only scene streaming: prepared take masters/Studio RGB8 cache ->
     # FFmpeg stdin. Never allocate the full decoded-frame or stitch RGB chain.
-        # A plain assembly (no colour layer to prepare) defaults to the piped encoder: it reads the
-    # take masters segment by segment instead of decoding the whole film into one float32 tensor
-    # (235 s of 768x1344 ≈ 70 GB of RAM and minutes of copies) and re-encoding it.
-    requested_pipe = (proj.get("run") or {}).get("export_pipe")
-    if requested_pipe is None:
-        requested_pipe = operation == "assemble"
-    if operation == "assemble" and requested_pipe is True:
+    # The piped encoder is the fast path (it reads the takes segment by segment instead of
+    # decoding the whole film into one float32 timeline), but it returns a one-frame IMAGE and
+    # skips the classic per-segment media pass — so it stays opt-in here and the editor asks for
+    # it explicitly (Save Video and the automatic assembly both set export_pipe).
+    if operation == "assemble" and (proj.get("run") or {}).get("export_pipe") is True:
         reason = ""
         if first or len(items) != len(all_items) or any(ukeys) or any(frozen) or reg_plans:
             reason = "частичная сборка, апскейл или сложный монтаж"
