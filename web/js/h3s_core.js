@@ -96,7 +96,12 @@ export function normalizeAccel(raw) {
 
 // «Сила доработки» choices of the upscale profiles; RECOMMENDED marks the user-tested value of a method
 export const SEG_UPSCALE_SIGMA_CHOICES = [0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 1.0];
-export const SEG_UPSCALE_SIGMA_RECOMMENDED = { tiles: 0.6 };
+export const SEG_UPSCALE_SIGMA_RECOMMENDED = { latent: 0.4, tiles: 0.6 };
+// Рекомендуемый профиль апскейла отрезка (зеркало h3s_core.RECOMMENDED_UPSCALE)
+export const RECOMMENDED_UPSCALE = {
+  latent: { mp: 2.0, sigma: 0.4, steps: 0, chunk: true, chunk_sec: 5.0, chunk_overlap: 1 },
+  tiles: { mp: 2.0, sigma: 0.6, steps: 0, chunk: false, chunk_sec: 5.0, chunk_overlap: 1 },
+};
 export const UPSCALE_LABELS = { latent: T("Окна (латент + доработка)"), tiles: T("Плитки (SyncTile)") };
 export function normalizeUpscale(u) {
   if (!u || typeof u !== "object") return null;

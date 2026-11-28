@@ -31,7 +31,10 @@ export function installUpscale(Editor, { C, h, ICON }) {
       return c.learned ? T("обученный латентный апскейлер") : T("растяжение латента (нет модели апскейлера)");
     },
 
-    upDefault() { return C.normalizeUpscale(this.p.settings.seg_upscale) || C.normalizeUpscale({ method: "latent", scale: 2 }); },
+    upDefault() {   // проект без апскейла получает рекомендуемый профиль, а не «×2 наугад»
+      return C.normalizeUpscale(this.p.settings.seg_upscale)
+        || C.normalizeUpscale({ method: "latent", ...C.RECOMMENDED_UPSCALE.latent });
+    },
     upText(u) { return u ? T("{0} · {1} Мп", LBL[u.method], this.upMpVal(u)) : ""; },
     /** Megapixels of the upscaled frame (the real snapped canvas). */
     upMpVal(u) { const [w, hh] = this.upCanvas(u); return (w * hh / 1e6).toFixed(1); },
@@ -261,6 +264,10 @@ export function installUpscale(Editor, { C, h, ICON }) {
       const methods = h("div", { class: "h3l-pills h3l-upmethods" }, ...C.SEG_UPSCALE_METHODS.map((m) => pill(m === m0, LBL[m],
         { latent: T("Окна: обученный латентный апскейлер H3 → доработка окнами (быстро, без декода/энкода)"), tiles: T("Плитки: апскейл → синхронные плитки (SyncTile): каждая плитка видит промпт и референсы отрезка") }[m] + T(" · вход: {0} · у метода свои настройки", this.upInputLabel(m)),
         () => { if (m !== m0) this.upSetProfile(m, {}, true); })));
+      const recBtn = h("div", { class: "h3l-row" },
+        h("button", { type: "button", class: "h3l-btn primary sm",
+          title: T("Поставить проверенные параметры этого метода: 2 Мп, σ 0.40 для латента / 0.60 для плиток, шаги как у «Этапа 2», куски 5 с только у латента. Генерацию не запускает."),
+          onclick: () => this.upSetProfile(m0, C.RECOMMENDED_UPSCALE[m0]) }, T("★ Рекомендуемые параметры")));
       const [bw, bh] = C.workResolution(g), [cw, chh] = this.upCanvas(f);
       const choices = this.upSizeChoices(f).filter((c) => c.mp), custom = !choices.some((c) => c.on);
       const size = h("select", { class: "h3l-sel up-mp", title: T("Размер кадра после апскейла в мегапикселях. Пропорции — как у проекта, стороны кратны 32") },
@@ -377,6 +384,7 @@ export function installUpscale(Editor, { C, h, ICON }) {
           : null);
       return h("details", { class: "h3l-det" }, h("summary", null, T("Апскейл")), h("div", { class: "in" },
         this.field(T("Метод"), methods), h("div", { class: "h3l-note" }, T("Ниже — настройки метода «{0}». У каждого метода свои: переключение их не сбрасывает.", LBL[m0])),
+        recBtn,
         this.field(T("Размер"), scales), this.field(T("Куски по времени"), chunks),
         h("div", { class: "h3l-grid2" }, this.field(T("Сила доработки"), sig), this.field(T("Шаги доработки"), steps)),
         h("div", { class: "h3l-grid2" }, this.field(T("Сэмплер"), smp), this.field(T("Расписание"), sch)),

@@ -187,6 +187,14 @@ SEG_UPSCALE_MP_RANGE = (0.01, 8.5)
 UPSCALE_CHUNK_SEC_RANGE = (2.0, 30.0)
 UPSCALE_CHUNK_OVERLAP_RANGE = (1, 3)
 SEG_UPSCALE_SIGMA = {"latent": 0.4, "tiles": 0.6}   # default refine strength (start sigma) per method
+# Рекомендуемый профиль апскейла отрезка: 2 Мп (≈×1.4 от кадра 768×1344), σ из проверенного
+# диапазона 0.25–0.45 для латента и 0.6 для плиток, шаги — как у «Этапа 2», куски по 5 с только
+# у латента (плитки уже ограничивают память внутри себя, дробление по времени им ничего не даёт).
+RECOMMENDED_UPSCALE = {
+    "latent": {"mp": 2.0, "sigma": 0.4, "steps": 0, "chunk": True, "chunk_sec": 5.0, "chunk_overlap": 1},
+    "tiles": {"mp": 2.0, "sigma": 0.6, "steps": 0, "chunk": False, "chunk_sec": 5.0, "chunk_overlap": 1},
+}
+SEG_UPSCALE_SIGMA_RECOMMENDED = {m: RECOMMENDED_UPSCALE[m]["sigma"] for m in RECOMMENDED_UPSCALE}   # marks in the UI
 SEG_UPSCALE_SIGMA_RANGE = (0.1, 1.0)
 SEG_UPSCALE_SIGMA_OLD_TILES = 0.35   # the tiles default before upscale_rev 4 (a profile still at it moves to 0.6)
 UPSCALE_REV = 5   # rev 5: drop RTX; saved rtx profiles/clips migrate to tiles σ 0.60

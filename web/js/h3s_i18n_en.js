@@ -191,6 +191,8 @@ export default {
   "✓ Готово. Проверьте результат и вставьте его в редактор.": "✓ Ready. Review the suggestion and insert it into the editor.",
   "Ошибка LLM: ": "LLM error: ",
   "Громкость фильма": "Film loudness",
+  "★ Рекомендуемые параметры": "★ Recommended parameters",
+  "Поставить проверенные параметры этого метода: 2 Мп, σ 0.40 для латента / 0.60 для плиток, шаги как у «Этапа 2», куски 5 с только у латента. Генерацию не запускает.": "Apply the tested parameters for this method: 2 MP, σ 0.40 for latent / 0.60 for tiles, steps as in «Этап 2», 5 s chunks for latent only. Does not start a generation",
   "Референсы": "References",
   "Без референсов": "No references",
   "Выбрано: {0}": "Selected: {0}",
