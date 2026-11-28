@@ -237,6 +237,7 @@ export const HELP_EN = [
 <li><b>Studio (Lab) colour correction</b> can be enabled separately in the Save dialog without modifying the source takes.</li>
 <li><b>🧪 New streaming export</b> is the primary save path: clips are piped to FFmpeg sequentially without huge temporary RGB frame caches. It supports hard cuts, continuation overlaps, audio, music, and prepared Studio Lab colour. IMAGE outputs one preview frame; LATENT contains the stitched chain.</li>
 <li><b>NVIDIA NVENC</b> is selected automatically when usable; CPU H.264 is used on failure. There are no separate NVENC, concat, or assembly-mode switches.</li>
+<li>Assembly runs through the piped encoder (take by take, never the whole film in memory), which is several times faster than the classic stitch; with colour correction it reads each segment's prepared RGB8 layer, and where a layer is missing it warns in the log and encodes that master without it. The brightness/contrast/detail comparison is skipped when the colour layer is off — it has nothing to feed.</li>
 <li>Complex regions, footage, upscale, face/audio refinement, frozen takes, and locked audio automatically use H3's compatible processing path. They may take longer and need additional disk space, but remain supported.</li>
 <li>Ready takes are assembled from cache without regenerating; generate any missing or changed takes first. A single-segment fragment is also available under “⤓ Save fragment” in the clip menu.</li></ul>`],
   ["projects", "Projects and autosave", `

@@ -3248,7 +3248,7 @@ def _run_project(model, clip, vae, project, audio_vae=None, audio=None, node_id=
     # (235 s of 768x1344 ≈ 70 GB of RAM and minutes of copies) and re-encoding it.
     requested_pipe = (proj.get("run") or {}).get("export_pipe")
     if requested_pipe is None:
-        requested_pipe = operation == "assemble" and not studio_mode
+        requested_pipe = operation == "assemble"
     if operation == "assemble" and requested_pipe is True:
         reason = ""
         if first or len(items) != len(all_items) or any(ukeys) or any(frozen) or reg_plans:

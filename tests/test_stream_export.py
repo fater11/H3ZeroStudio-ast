@@ -33,6 +33,30 @@ def test_stream_export_direct_pipe_preserves_overlap_and_audio(tmp_path):
     assert not list(tmp_path.rglob("h3zs_stitch_frames_*"))
 
 
+def test_studio_pipe_encodes_the_prepared_colour_cache(tmp_path):
+    """С цветокоррекцией поток берёт готовый RGB8-слой отрезка, а не мастер."""
+    from h3s import h3s_studio_cache as studio_cache
+
+    master = torch.zeros(8, 64, 96, 3)
+    graded = torch.zeros(8, 64, 96, 3)
+    graded[..., 0] = 0.85          # warm grade: clearly different from the black master
+    graded[..., 1] = 0.10
+    graded[..., 2] = 0.10
+    path = str(tmp_path / "master.mp4")
+    media.write_mp4(path, master, fps=24)
+    studio_cache.save(str(tmp_path), "colour-key", graded)
+    assert studio_cache.path_for(str(tmp_path), "colour-key")
+    plan = {"project_dir": str(tmp_path), "sources": [
+        {"path": path, "frames": 8, "overlap": 0, "link": "start", "colour_key": "colour-key"}],
+        "width": 96, "height": 64, "fps": 24, "frames": 8, "studio": True}
+    target = str(tmp_path / "studio.mp4")
+    preview = pipe.render(plan, target, {"waveform": torch.zeros(1, 2, 16000), "sample_rate": 48000},
+                          encoder="cpu")
+    assert os.path.isfile(target) and media.video_info(target)["frames"] == 8
+    assert float(preview[..., 0].mean()) > 0.5      # the graded red, not the master's black
+    assert float(preview[..., 1].mean()) < 0.3
+
+
 def test_pipe_respects_end_marker_without_loading_later_scene(tmp_path, monkeypatch):
     first = torch.zeros(24, 64, 96, 3)
     second = torch.ones(24, 64, 96, 3)
