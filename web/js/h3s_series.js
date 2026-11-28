@@ -50,7 +50,7 @@ export function installSeries(Editor, { C, h, ICON }) {
       this.$.series = page;
       this.root.append(page);
       const [w, hh] = C.resolution(this.p.settings);
-      this.srState = { idea: "", seconds: 30, width: w, height: hh, beats: 0, overlap: 1, refs: 0,
+      this.srState = { idea: "", seconds: 30, width: w, height: hh, beats: 0, overlap: 1, refIds: [],
                        style: "", sound: "", extra: "", useLlm: true, plan: null, written: null, shot: 0,
                        report: "", project: null };
       this.srRender();
@@ -68,6 +68,23 @@ export function installSeries(Editor, { C, h, ICON }) {
         h("button", { onclick: () => this.srClose() }, T("Закрыть")));
       const body = h("div", { class: "h3l-sr-body" });
 
+      // Референсы серии: ассеты текущего проекта. Токены нумеруются в порядке выбора —
+      // картинки отдельно от видео, как их ждёт H3 (<Picture N>, <Video N>).
+      const refAssets = (this.p.assets || []).filter((a) => ["image", "video"].includes(a.category));
+      const picked = st.refIds.map((id) => refAssets.find((a) => a.id === id)).filter(Boolean);
+      const tokens = new Map();
+      let pics = 0, vids = 0;
+      for (const a of picked) tokens.set(a.id, a.category === "video" ? `<Video ${++vids}>` : `<Picture ${++pics}>`);
+      const refChips = h("div", { class: "h3l-pills wrap" }, ...(refAssets.length ? refAssets.map((a) => {
+        const on = st.refIds.includes(a.id), label = a.name || a.file;
+        return h("div", { class: "h3l-pill" + (on ? " on" : ""), role: "button", tabindex: "0",
+          title: label, "aria-pressed": on ? "true" : "false",
+          onclick: () => {
+            st.refIds = on ? st.refIds.filter((x) => x !== a.id) : [...st.refIds, a.id];
+            this.srRender();
+          } },
+          on ? `${tokens.get(a.id)} · ${label}` : label);
+      }) : [h("div", { class: "rep" }, T("В проекте нет изображений или видео — добавьте ассеты"))]));
       const plan = st.plan;
       const ideaCol = h("div", { class: "h3l-sr-col" },
         h("b", null, T("Идея")),
@@ -77,7 +94,10 @@ export function installSeries(Editor, { C, h, ICON }) {
         field(T("Высота"), num(st.height, (v) => { st.height = Number(v) || 768; })),
         field(T("Отрезков (0 — авто)"), num(st.beats, (v) => { st.beats = Number(v) || 0; })),
         field(T("Перекрытие, блоков"), num(st.overlap, (v) => { st.overlap = Number(v) || 0; })),
-        field(T("Референсов"), num(st.refs, (v) => { st.refs = Number(v) || 0; })),
+        h("b", null, T("Референсы")),
+        refChips,
+        h("div", { class: "rep" }, st.refIds.length ? T("Выбрано: {0}", st.refIds.length) : T("Без референсов")),
+        h("div", { class: "rep" }, T("Метки <Picture N> / <Video N> идут и в промты, и во все отрезки серии. Референсы берутся из ассетов текущего проекта.")),
         field(T("Стиль"), input(st.style, (v) => { st.style = v; })),
         field(T("Звук сцены"), input(st.sound, (v) => { st.sound = v; })),
         field(T("Дополнительно"), input(st.extra, (v) => { st.extra = v; })),
@@ -128,7 +148,8 @@ export function installSeries(Editor, { C, h, ICON }) {
     srPayload() {
       const st = this.srState;
       return { idea: st.idea, seconds: st.seconds, width: st.width, height: st.height,
-               beats: st.beats || undefined, overlap_blocks: st.overlap, ref_images: st.refs };
+               beats: st.beats || undefined, overlap_blocks: st.overlap,
+               refs: st.refIds, ref_images: st.refIds.length };
     },
 
     async srPlan() {
@@ -151,8 +172,15 @@ export function installSeries(Editor, { C, h, ICON }) {
       // полный промт отрезка — это шесть секций на несколько тысяч знаков: на 6000 токенов thinking-модель
       // упиралась в потолок и отдавала обрезанный ответ, который не разбирался как JSON
       const cap = Math.max(4000, Math.min(32000, Number(cfg.max_tokens) || 16000));
+      const refAssets = (this.p.assets || []).filter((a) => st.refIds.includes(a.id));
+      let pics = 0, vids = 0;
+      const refNotes = refAssets.map((a) => {
+        const token = a.category === "video" ? `<Video ${++vids}>` : `<Picture ${++pics}>`;
+        return `${token} — ${a.name || a.file}`;
+      });
       const body = { plan: st.plan, idea: st.idea, style: st.style, sound: st.sound, extra: st.extra,
                      only: k, use_llm: useLlm !== false, allow_fallback: false,
+                     refs: st.refIds, ref_notes: refNotes,
                      api_base: cfg.api_base, api_key: cfg.api_key, api_model: cfg.api_model,
                      temperature: cfg.temperature, max_tokens: cap,
                      stream_timeout: cfg.stream_timeout };
@@ -218,7 +246,9 @@ export function installSeries(Editor, { C, h, ICON }) {
       try {
         st.report = T("Собираю проект…"); this.srRender();
         const d = await this.host.call("/h3lab/series/project", { plan: st.plan, written: st.written || {},
-          settings: this.p.settings, name: (st.idea || "").slice(0, 60) || undefined, save: !!save });
+          settings: this.p.settings, name: (st.idea || "").slice(0, 60) || undefined, save: !!save,
+          refs: st.refIds,
+          assets: (this.p.assets || []).filter((a) => st.refIds.includes(a.id)) });
         st.project = d.project;
         st.report = save ? T("Проект сохранён: {0}", d.saved.id) : T("Проект создан (не сохранён)");
       } catch (e) { st.report = String(e.message || e); }

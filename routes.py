@@ -479,7 +479,7 @@ def register():
                                      budget=int(b["budget"]) if b.get("budget") else None,
                                      beats=int(b["beats"]) if b.get("beats") else None,
                                      overlap_blocks=int(b.get("overlap_blocks")) if b.get("overlap_blocks") is not None else 1,
-                                     ref_images=int(b.get("ref_images") or 0))
+                                     ref_images=int(b.get("ref_images") or 0) or len(b.get("refs") or []))
         return await _json_call(work)
 
     @routes.post("/h3lab/series/write")
@@ -509,8 +509,11 @@ def register():
                                                 thinking=False,
                                                 stream_timeout=float(b.get("stream_timeout") or 600))
             only = b.get("only")
+            # ref_notes — строки для писателя («<Picture 1> — героиня»), refs — id ассетов для проекта
+            notes = b.get("ref_notes")
             return series.write_series(plan, fetch=fetch, style=str(b.get("style") or ""),
-                                       refs=list(b.get("refs") or []), language=str(b.get("language") or "ru"),
+                                       refs=list(notes if isinstance(notes, list) else (b.get("refs") or [])),
+                                       language=str(b.get("language") or "ru"),
                                        extra=str(b.get("extra") or ""), sound=str(b.get("sound") or ""),
                                        # предыдущий отрезок уже написан: он и есть контекст продолжения
                                        previous_prompt=str(b.get("previous_prompt") or ""),
@@ -531,7 +534,9 @@ def register():
             name = b.get("name") or None
             existing = lib.project_get(lib.clean_id(name)) if name else None
             project = series.build_project(plan, b.get("written") or {}, settings=b.get("settings") or {},
-                                           name=name, existing=existing)
+                                           name=name, existing=existing,
+                                           refs=list(b.get("refs") or []),
+                                           assets=list(b.get("assets") or []))
             saved = None
             if b.get("save"):
                 saved = lib.project_save(project, {"name": project["name"], "series": True})

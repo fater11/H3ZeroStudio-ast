@@ -455,3 +455,27 @@ def test_the_brief_asks_for_the_next_beat_handoff():
     assert "OPENING segment" in first and "Next part of the idea" in first
     last = S.writer_messages("One. Two. Three.", plan, only=2)[1]["content"]
     assert "Next part of the idea" not in last
+
+
+def test_references_reach_the_writer_and_every_segment():
+    """Референсы серии: метки идут в задание писателю, а id ассетов — во все отрезки проекта."""
+    plan = S.plan_beats("Woman restores an old clock", 20, w=960, h=544, budget=200_000, beats=2)
+    msg = S.writer_messages("Woman restores an old clock", plan,
+                            refs=["<Picture 1> — героиня", "<Video 1> — движение рук"])[1]["content"]
+    assert "<Picture 1>" in msg and "<Video 1>" in msg
+
+    written = {"segments": [{"index": 0, "prompt": good_prompt()}, {"index": 1, "prompt": good_prompt()}]}
+    project = S.build_project(plan, written,
+                              refs=["asset-photo", "asset-clip"],
+                              assets=[{"id": "asset-photo", "name": "героиня", "file": "hero.jpg",
+                                       "subfolder": "", "type": "input", "category": "image"},
+                                      {"id": "asset-clip", "name": "руки", "file": "hands.mp4",
+                                       "subfolder": "", "type": "input", "category": "video"},
+                                      {"id": "unused", "name": "лишний", "file": "x.png",
+                                       "subfolder": "", "type": "input", "category": "image"}])
+    assert all(seg["refs"] == ["asset-photo", "asset-clip"] for seg in project["segments"])
+    # ассеты, на которые ссылаются отрезки, копируются в новый проект (иначе метки не разрешатся)
+    assert {a["id"] for a in project["assets"]} == {"asset-photo", "asset-clip"}
+    # без референсов серия остаётся без них
+    plain = S.build_project(plan, written)
+    assert all(seg["refs"] == [] for seg in plain["segments"])
