@@ -479,3 +479,17 @@ def test_references_reach_the_writer_and_every_segment():
     # без референсов серия остаётся без них
     plain = S.build_project(plan, written)
     assert all(seg["refs"] == [] for seg in plain["segments"])
+
+def test_character_cards_reach_the_project_and_every_segment():
+    """Карточки персонажей: ссылки на все отрезки, снимки — в проект, без снимка карточка не остаётся."""
+    plan = S.plan_beats("Woman restores an old clock", 20, w=960, h=544, budget=200_000, beats=2)
+    written = {"segments": [{"index": 0, "prompt": good_prompt()}, {"index": 1, "prompt": good_prompt()}]}
+    snaps = {"c1": {"name": "Мира", "concept": "human", "vkind": "image", "appearance": "тёмные волосы"},
+             "c2": {"name": "Голос", "concept": "generic", "audio": True}}
+    project = S.build_project(plan, written, cards=["c1", {"id": "c2", "w": 1}], card_snaps=snaps)
+    assert all([c["id"] for c in seg["cards"]] == ["c1", "c2"] for seg in project["segments"])
+    assert set(project["cards"]) == {"c1", "c2"}
+    assert project["cards"]["c1"]["name"] == "Мира"
+    # карточка без снимка (нет в библиотеке) не попадает на отрезки: иначе метка не разрешится
+    lonely = S.build_project(plan, written, cards=["c1", "gone"], card_snaps=snaps)
+    assert all([c["id"] for c in seg["cards"]] == ["c1"] for seg in lonely["segments"])

@@ -583,7 +583,8 @@ def _is_draft(segment):
     return str((segment or {}).get("note") or "").startswith("шаблон")
 
 
-def build_project(plan, written, settings=None, name=None, existing=None, refs=None, assets=None):
+def build_project(plan, written, settings=None, name=None, existing=None, refs=None, assets=None,
+                  cards=None, card_snaps=None):
     """Серия → обычный проект пака: отрезки со связью, перекрытием и промтами.
 
     `existing` — уже сохранённый проект этой же серии: если раскладка отрезков та же, а новый промт
@@ -606,21 +607,33 @@ def build_project(plan, written, settings=None, name=None, existing=None, refs=N
     # Референсы серии: одни и те же ассеты на всех отрезках, чтобы метки <Picture N>/<Video N>
     # из промтов разрешались в каждом отрезке, а не только в первом.
     ref_ids = [str(r) for r in (refs or []) if str(r).strip()]
+    # Персонажи-карточки: на отрезки идут ссылки (id/вес/вкл), а в проект — снимки из библиотеки.
+    # Снимок и есть то, чем пользуется генерация, поэтому файлы копировать не нужно.
+    card_refs = core.normalize_card_refs([{"id": c} if isinstance(c, str) else c for c in (cards or [])])
+    snaps = core.normalize_card_snaps(card_snaps or {})
+    card_refs = [c for c in card_refs if not snaps or c["id"] in snaps]
     segments = []
     for b in plan["beats"]:
         segments.append({"id": f"s{b['index'] + 1}", "name": f"{b['index'] + 1}. {b['role']}",
                          "frames": int(b["frames"]), "prompt": prompts.get(b["index"], ""),
                          "link": "cut" if b["index"] == 0 else "extend",
-                         "overlap_blocks": int(b["overlap_blocks"]), "refs": list(ref_ids)})
+                         "overlap_blocks": int(b["overlap_blocks"]), "refs": list(ref_ids),
+                         "cards": [dict(c) for c in card_refs]})
     wide = plan["width"] >= plan["height"]
     # Референсы указывают на ассеты исходного проекта: без их копии в новом проекте метки
     # <Picture N>/<Video N> не разрешались бы при генерации.
     wanted = {str(r) for r in ref_ids}
     keep_assets = [{k: a.get(k) for k in ("id", "name", "file", "subfolder", "type", "category")}
                    for a in (assets or []) if str(a.get("id")) in wanted]
+    # Персонажи-карточки: на отрезки идут ссылки (id/вес/вкл), а в проект — снимки из библиотеки.
+    # Снимок и есть то, чем пользуется генерация, поэтому файлы копировать не нужно.
+    card_refs = core.normalize_card_refs([{"id": c} if isinstance(c, str) else c for c in (cards or [])])
+    snaps = core.normalize_card_snaps(card_snaps or {}) if card_snaps else {}
+    card_refs = [c for c in card_refs if not snaps or c["id"] in snaps]
     project = {"id": lib.clean_id(name or plan["idea"][:24] or "series"),
                "name": name or (written or {}).get("title") or plan["idea"][:60] or "Серия",
                "settings": dict(settings or {}), "segments": segments, "assets": keep_assets,
+               "cards": {k: dict(v) for k, v in snaps.items()},
                "stats": {"series": {"idea": plan["idea"], "logline": (written or {}).get("logline") or "",
                                     "beats": len(plan["beats"]), "seconds": plan["seconds"],
                                     "budget": plan["budget"]}},

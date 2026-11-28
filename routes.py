@@ -536,7 +536,9 @@ def register():
             project = series.build_project(plan, b.get("written") or {}, settings=b.get("settings") or {},
                                            name=name, existing=existing,
                                            refs=list(b.get("refs") or []),
-                                           assets=list(b.get("assets") or []))
+                                           assets=list(b.get("assets") or []),
+                                           cards=list(b.get("cards") or []),
+                                           card_snaps=dict(b.get("card_snaps") or {}))
             saved = None
             if b.get("save"):
                 saved = lib.project_save(project, {"name": project["name"], "series": True})

@@ -51,6 +51,7 @@ export function installSeries(Editor, { C, h, ICON }) {
       this.root.append(page);
       const [w, hh] = C.resolution(this.p.settings);
       this.srState = { idea: "", seconds: 30, width: w, height: hh, beats: 0, overlap: 1, refIds: [],
+                       cardIds: [], cardSnaps: {},
                        style: "", sound: "", extra: "", useLlm: true, plan: null, written: null, shot: 0,
                        report: "", project: null };
       this.srRender();
@@ -85,6 +86,22 @@ export function installSeries(Editor, { C, h, ICON }) {
           } },
           on ? `${tokens.get(a.id)} · ${label}` : label);
       }) : [h("div", { class: "rep" }, T("В проекте нет изображений или видео — добавьте ассеты"))]));
+      // Персонажи: метки карточек нумеруются ПОСЛЕ референсов (так же, как card_labels на сервере).
+      if (!this._chars?.t && !this._chars?.loading && !this._srCharsAsked && this.charsLoad) {
+        this._srCharsAsked = true;
+        this.charsLoad().then(() => { if (this.tool === "series") this.srRender(); });
+      }
+      const libCards = (this._chars?.cards || []).filter((c) => c && c.id);
+      const cardChips = h("div", { class: "h3l-pills wrap" }, ...(libCards.length ? libCards.map((c) => {
+        const on = st.cardIds.includes(c.id);
+        return h("div", { class: "h3l-pill" + (on ? " on" : ""), role: "button", tabindex: "0",
+          title: c.name || c.id, "aria-pressed": on ? "true" : "false",
+          onclick: () => {
+            if (on) { st.cardIds = st.cardIds.filter((x) => x !== c.id); const s = { ...st.cardSnaps }; delete s[c.id]; st.cardSnaps = s; }
+            else { st.cardIds = [...st.cardIds, c.id]; st.cardSnaps = { ...st.cardSnaps, [c.id]: C.cardSnap(c) }; }
+            this.srRender();
+          } }, on ? `★ ${c.name || c.id}` : (c.name || c.id));
+      }) : [h("div", { class: "rep" }, T("В библиотеке нет персонажей — создайте их в разделе «Персонажи»"))]));
       const plan = st.plan;
       const ideaCol = h("div", { class: "h3l-sr-col" },
         h("b", null, T("Идея")),
@@ -98,6 +115,10 @@ export function installSeries(Editor, { C, h, ICON }) {
         refChips,
         h("div", { class: "rep" }, st.refIds.length ? T("Выбрано: {0}", st.refIds.length) : T("Без референсов")),
         h("div", { class: "rep" }, T("Метки <Picture N> / <Video N> идут и в промты, и во все отрезки серии. Референсы берутся из ассетов текущего проекта.")),
+        h("b", null, T("Персонажи")),
+        cardChips,
+        h("div", { class: "rep" }, st.cardIds.length ? T("Выбрано: {0}", st.cardIds.length) : T("Без персонажей")),
+        h("div", { class: "rep" }, T("Карточки идут после референсов и попадают во все отрезки: описание внешности и голоса берётся из библиотеки.")),
         field(T("Стиль"), input(st.style, (v) => { st.style = v; })),
         field(T("Звук сцены"), input(st.sound, (v) => { st.sound = v; })),
         field(T("Дополнительно"), input(st.extra, (v) => { st.extra = v; })),
@@ -145,11 +166,28 @@ export function installSeries(Editor, { C, h, ICON }) {
       catch (e) { this.toast(String(e.message || e), true); }
     },
 
+    // Метки серии: <Picture n> для картинок-референсов, затем <Video n> для видео,
+    // дальше карточки персонажей — их изображения продолжают нумерацию картинок.
+    srNotes() {
+      const st = this.srState, assets = (this.p.assets || []).filter((a) => st.refIds.includes(a.id));
+      const imgs = assets.filter((a) => a.category !== "video"), vidsA = assets.filter((a) => a.category === "video");
+      let pics = imgs.length, vids = vidsA.length;
+      const out = [...imgs.map((a, i) => `<Picture ${i + 1}> — ${a.name || a.file}`),
+                   ...vidsA.map((a, i) => `<Video ${i + 1}> — ${a.name || a.file}`)];
+      for (const id of st.cardIds) {
+        const sn = st.cardSnaps[id] || {}, name = sn.name || id;
+        const token = sn.vkind === "video" ? `<Video ${++vids}>` : `<Picture ${++pics}>`;
+        const look = String(sn.appearance || "").trim();
+        out.push(`${token} — ${name}${look ? ": " + look.slice(0, 400) : ""}`);
+      }
+      return out;
+    },
+
     srPayload() {
       const st = this.srState;
       return { idea: st.idea, seconds: st.seconds, width: st.width, height: st.height,
                beats: st.beats || undefined, overlap_blocks: st.overlap,
-               refs: st.refIds, ref_images: st.refIds.length };
+               refs: st.refIds, cards: st.cardIds, ref_images: st.refIds.length + st.cardIds.length };
     },
 
     async srPlan() {
@@ -172,12 +210,7 @@ export function installSeries(Editor, { C, h, ICON }) {
       // полный промт отрезка — это шесть секций на несколько тысяч знаков: на 6000 токенов thinking-модель
       // упиралась в потолок и отдавала обрезанный ответ, который не разбирался как JSON
       const cap = Math.max(4000, Math.min(32000, Number(cfg.max_tokens) || 16000));
-      const refAssets = (this.p.assets || []).filter((a) => st.refIds.includes(a.id));
-      let pics = 0, vids = 0;
-      const refNotes = refAssets.map((a) => {
-        const token = a.category === "video" ? `<Video ${++vids}>` : `<Picture ${++pics}>`;
-        return `${token} — ${a.name || a.file}`;
-      });
+      const refNotes = this.srNotes();
       const body = { plan: st.plan, idea: st.idea, style: st.style, sound: st.sound, extra: st.extra,
                      only: k, use_llm: useLlm !== false, allow_fallback: false,
                      refs: st.refIds, ref_notes: refNotes,
@@ -248,7 +281,8 @@ export function installSeries(Editor, { C, h, ICON }) {
         const d = await this.host.call("/h3lab/series/project", { plan: st.plan, written: st.written || {},
           settings: this.p.settings, name: (st.idea || "").slice(0, 60) || undefined, save: !!save,
           refs: st.refIds,
-          assets: (this.p.assets || []).filter((a) => st.refIds.includes(a.id)) });
+          assets: (this.p.assets || []).filter((a) => st.refIds.includes(a.id)),
+          cards: st.cardIds.map((id) => ({ id, w: 1, on: true })), card_snaps: st.cardSnaps });
         st.project = d.project;
         st.report = save ? T("Проект сохранён: {0}", d.saved.id) : T("Проект создан (не сохранён)");
       } catch (e) { st.report = String(e.message || e); }
