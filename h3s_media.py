@@ -3,6 +3,7 @@ import os
 import time
 
 import numpy as np
+import torch
 
 
 def replace_file(tmp, path, tries=20, delay=0.05):
@@ -46,6 +47,86 @@ RANGE_TV = 1       # AVCOL_RANGE_MPEG
 
 AUDIO_NORM_MODES = ("off", "peak", "lufs-14", "lufs-16", "lufs-18")
 AUDIO_PEAK_DB = -1.0        # ceiling after any gain, so a loud source never clips
+AUDIO_GATE_DB = -45.0       # default gate threshold: below this a pause is a pause
+
+
+def _blocks(x, size):
+    """[B,C,L] -> [B,C,F,size] plus the padding that was added."""
+    n = int(x.shape[-1])
+    pad = (-n) % int(size)
+    if pad:
+        x = torch.nn.functional.pad(x, (0, pad))
+    return x.reshape(x.shape[0], x.shape[1], -1, int(size)), pad
+
+
+def _per_sample(gain, size, n, smooth=True):
+    """Block gain [B,C,F] -> per-sample gain [B,C,L].
+
+    smooth=True interpolates between block centres (gate: no stepping in a pause);
+    smooth=False holds each block's gain for its own samples — a limiter must not fall
+    between two blocks on a single-sample transient.
+    """
+    if not smooth:
+        return gain.repeat_interleave(int(size), dim=-1)[..., :n]
+    expanded = torch.nn.functional.interpolate(gain, size=int(gain.shape[-1]) * int(size), mode="linear",
+                                               align_corners=False)
+    return expanded[..., :n]
+
+
+def audio_gate(waveform, sample_rate, threshold_db=AUDIO_GATE_DB, depth_db=20.0):
+    """Expander for pauses: below the threshold the signal is pulled down by depth dB.
+
+    10 ms blocks with a fast opening and a slow closing keep speech untouched — only the
+    floor between phrases moves down. Static gain normalisation cannot do that.
+    """
+    x = waveform.detach().float()
+    if not x.numel() or x.shape[-1] < 64:
+        return waveform
+    size = max(16, int(int(sample_rate) * 0.010))
+    blocks, _pad = _blocks(x, size)
+    # RMS per block, not the block peak: a noise floor reads ~10 dB lower as RMS, and the
+    # threshold has to describe the floor, otherwise the gate stays open in the pauses.
+    env = 20.0 * torch.log10(blocks.pow(2).mean(dim=-1).sqrt().clamp_min(1e-8))
+    shut = torch.full_like(env, -abs(float(depth_db)))
+    want = torch.where(env >= float(threshold_db), torch.zeros_like(env), shut)
+    frames = int(want.shape[-1])
+    out = torch.empty_like(want)
+    g = want[..., 0].clone()
+    out[..., 0] = g
+    open_coef, close_coef = 0.6, 0.10        # opening ~17 ms, closing ~100 ms at 10 ms blocks
+    for i in range(1, frames):
+        target = want[..., i]
+        coef = torch.where(target > g, open_coef, close_coef)
+        g = g + coef * (target - g)
+        out[..., i] = g
+    gain = 10.0 ** (out / 20.0)
+    return (x * _per_sample(gain, size, int(x.shape[-1]))).to(waveform.dtype)
+
+
+def audio_limiter(waveform, sample_rate, ceiling_db=AUDIO_PEAK_DB, release_ms=80.0):
+    """Soft peak limiter: only the samples above the ceiling come down.
+
+    Instead of turning the whole film down because one transient is hot (what a static
+    ceiling did), the gain rides the envelope: instant reduction, ~80 ms release.
+    """
+    x = waveform.detach().float()
+    if not x.numel():
+        return waveform
+    ceiling = 10.0 ** (float(ceiling_db) / 20.0)
+    size = max(8, int(int(sample_rate) * 0.002))
+    blocks, _pad = _blocks(x, size)
+    peak = blocks.abs().amax(dim=-1)
+    want = torch.where(peak > ceiling, ceiling / peak.clamp_min(1e-8), torch.ones_like(peak))
+    frames = int(want.shape[-1])
+    out = torch.empty_like(want)
+    release = max(0.01, min(1.0, 1.0 / max(1.0, float(release_ms) / 2.0)))
+    g = want[..., 0].clone()
+    out[..., 0] = g
+    for i in range(1, frames):
+        target = want[..., i]
+        g = torch.where(target < g, target, g + (target - g) * release)   # down at once, up slowly
+        out[..., i] = g
+    return (x * _per_sample(out, size, int(x.shape[-1]), smooth=False)).to(waveform.dtype)
 
 
 def _integrated_lufs(waveform, sample_rate):
@@ -83,32 +164,40 @@ def _integrated_lufs(waveform, sample_rate):
     return value if -70.0 < value < 40.0 and value != float("-inf") else None
 
 
-def normalize_audio(waveform, sample_rate, mode="off"):
-    """Bring the finished film to a level. "peak" only caps the top; "lufs-NN" also matches
-    integrated loudness. Take audio is never touched — this runs on the final mix only."""
+def normalize_audio(waveform, sample_rate, mode="off", gate=None, limiter=True):
+    """Level of the finished film: gate the pauses, match the loudness, limit the peaks.
+
+    «peak» brings the loudest sample to the ceiling; «lufs-NN» equalises integrated loudness
+    per BS.1770. `gate` is {"threshold": dB, "depth": dB} or None; `limiter` only touches
+    samples above the ceiling, so one hot transient no longer turns the whole film down.
+    Take audio is never touched — this runs on the final mix only.
+    """
     mode = str(mode or "off").lower().strip()
-    if mode not in AUDIO_NORM_MODES or mode == "off" or waveform is None or not waveform.numel():
+    if mode not in AUDIO_NORM_MODES:
+        mode = "off"
+    if waveform is None or not waveform.numel() or (mode == "off" and not gate and not limiter):
         return waveform
     x = waveform.detach().float().clone()
-    target = None
-    if mode.startswith("lufs-"):
+    if gate:
+        x = audio_gate(x, sample_rate, float((gate or {}).get("threshold", AUDIO_GATE_DB)),
+                       float((gate or {}).get("depth", 20.0)))
+    ceiling = 10.0 ** (AUDIO_PEAK_DB / 20.0)
+    if mode == "peak":
+        peak = float(x.abs().max())
+        if peak > 0:
+            x = x * min(ceiling / peak, 10.0 ** (30.0 / 20.0))   # never lift near-silence by >30 dB
+    elif mode.startswith("lufs-"):
         try:
             target = -float(mode.split("-", 1)[1])
         except ValueError:
             target = None
-    if target is not None:
-        current = _integrated_lufs(x, sample_rate)
-        if current is not None:
-            x = x * (10.0 ** ((target - current) / 20.0))
-    ceiling = 10.0 ** (AUDIO_PEAK_DB / 20.0)
-    limit = 10.0 ** (30.0 / 20.0)          # never lift near-silence by more than 30 dB
-    peak = float(x.abs().max())
-    if peak > 0:
-        if target is None:                  # "peak": bring the loudest sample to the ceiling
-            x = x * min(ceiling / peak, limit)
-        elif peak > ceiling:                # "lufs": gain to the target, then keep the top clean
-            x = x * (ceiling / peak)
-    return x
+        if target is not None:
+            current = _integrated_lufs(x, sample_rate)
+            if current is not None:
+                x = x * (10.0 ** ((target - current) / 20.0))
+    if limiter:
+        x = audio_limiter(x, sample_rate, AUDIO_PEAK_DB)
+    return x.to(waveform.dtype)
 
 
 def nvenc_available():

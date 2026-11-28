@@ -81,6 +81,10 @@ DEFAULT_SETTINGS = {
     "audio_match": True,       # match the next segment's loudness (RMS) to the previous one around the seam
     "audio_declick": True,     # ~5 ms taper each side of hard audio cuts (new scene, footage, export edges)
     "audio_normalize": "off",  # level of the finished film: off | peak (-1 dB) | lufs-14 | lufs-16 | lufs-18
+    "audio_gate": False,       # expander for pauses: pull the floor down between phrases
+    "audio_gate_threshold": -45,   # dB, below which a passage counts as a pause
+    "audio_gate_depth": 20,        # dB of attenuation in the pauses
+    "audio_limiter": True,     # soft peak limiter instead of turning the whole film down
     "level_lock": True,        # match brightness/colour on both sides of continuation joins (decoded frames only)
     "level_lock_frames": 12,   # blend window each side, 2-48 frames
     "magnet": False,           # timeline «🧲 Магнит»: off = a dragged clip leaves a gap; on = clips stick, drag reorders
@@ -157,7 +161,8 @@ GLOBAL_KEYS = ("final_mode", "piflow_steps", "piflow_lora2", "piflow_lora4", "st
                "refine_sigma", "refine_schedule_mode", "refine_denoise", "refine_identity_images", "refine_steps", "refine_seed", "refine_sampler", "refine_scheduler", "refine_cfg",
                "sigmas", "draft_sigmas", "refine_sigmas",
                "upscale_method", "upscale_rev", "seg_upscale", "upscale_profiles", "upscale_chunk_sec", "upscale_chunk_overlap", "upscale_gen", "upscale_model", "overlap_blocks", "audio_context_sec", "self_anchor_voice", "lock_overlap", "continuation_method", "continuity_ref",
-               "continuity_phrase", "ref_size", "cache", "resume_only", "anchor", "audio_seam_lock", "audio_xfade", "audio_xfade_sec", "audio_match", "audio_declick", "audio_normalize", "level_lock", "level_lock_frames", "magnet", "vram_headroom_gb",
+               "continuity_phrase", "ref_size", "cache", "resume_only", "anchor", "audio_seam_lock", "audio_xfade", "audio_xfade_sec", "audio_match", "audio_declick", "audio_normalize", "audio_gate", "audio_gate_threshold",
+               "audio_gate_depth", "audio_limiter", "level_lock", "level_lock_frames", "magnet", "vram_headroom_gb",
                "preview_tiny_vae", "preview_max_res", "preview_quality", "preview_frames", "preview_fps", "preview_suppress",
                "refine_prompt", "export_grain", "export_preset", "auto_assemble",
                "swap_expand", "swap_feather", "swap_fill_holes", "swap_temporal_expand",

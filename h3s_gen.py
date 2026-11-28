@@ -611,16 +611,25 @@ def polish_final_audio(out_audio, settings):
     Take audio and the seam matching stay as generated; this runs once on the final mix in
     both the piped and the classic assembly.
     """
-    mode = str((settings or {}).get("audio_normalize") or "off").lower().strip()
-    if mode in ("", "off") or not isinstance(out_audio, dict) or out_audio.get("waveform") is None:
+    s = settings or {}
+    mode = str(s.get("audio_normalize") or "off").lower().strip()
+    gate = ({"threshold": float(s.get("audio_gate_threshold", -45)), "depth": float(s.get("audio_gate_depth", 20))}
+            if s.get("audio_gate") else None)
+    limiter = s.get("audio_limiter", True) is not False
+    if (mode in ("", "off") and not gate and not limiter) or not isinstance(out_audio, dict) \
+            or out_audio.get("waveform") is None:
         return out_audio
     try:
         from . import h3s_media as media
-        wave = media.normalize_audio(out_audio["waveform"], int(out_audio.get("sample_rate") or 44100), mode)
-        log(f"final audio: normalized to {mode}")
+        wave = media.normalize_audio(out_audio["waveform"], int(out_audio.get("sample_rate") or 44100),
+                                     mode, gate=gate, limiter=limiter)
+        log("final audio: " + ", ".join(x for x in (
+            f"gate {gate['threshold']:g} dB / -{gate['depth']:g} dB" if gate else "",
+            f"level {mode}" if mode not in ("", "off") else "",
+            "peak limiter" if limiter else "") if x))
         return {**out_audio, "waveform": wave}
     except Exception as e:
-        log(f"final audio: normalization skipped ({e})")
+        log(f"final audio: processing skipped ({e})")
         return out_audio
 
 

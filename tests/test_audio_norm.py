@@ -50,3 +50,53 @@ def test_loud_source_is_turned_down_without_clipping():
 def test_unknown_mode_is_a_no_op():
     wave = _sine(0.05)
     assert torch.equal(media.normalize_audio(wave, 48000, "weird"), wave)
+
+def _speech_with_floor(noise=0.005, seconds=6.0, rate=48000):
+    import torch
+    n = int(rate * seconds)
+    t = torch.arange(n).float() / rate
+    on = (torch.arange(n) // rate % 2 == 0).float()
+    torch.manual_seed(1)
+    signal = (0.7 * torch.sin(2 * math.pi * 250 * t) * on + noise * torch.randn(n))[None, None]
+    return signal.repeat(1, 2, 1), on.bool()
+
+
+def _rms_db(x):
+    return 20 * math.log10(max(float(x.pow(2).mean().sqrt()), 1e-12))
+
+
+def test_gate_pushes_the_pause_floor_down_and_leaves_speech():
+    wave, on = _speech_with_floor()
+    out = media.normalize_audio(wave, 48000, "off", gate={"threshold": -40.0, "depth": 20.0}, limiter=True)
+    speech_before, speech_after = _rms_db(wave[0, 0][on]), _rms_db(out[0, 0][on])
+    floor_before, floor_after = _rms_db(wave[0, 0][~on]), _rms_db(out[0, 0][~on])
+    assert abs(speech_after - speech_before) < 1.0        # речь не тронута
+    assert floor_before - floor_after > 8.0               # пауза ушла вниз
+    assert (speech_after - floor_after) - (speech_before - floor_before) > 8.0
+
+
+def test_gate_stays_open_on_a_loud_floor():
+    wave, on = _speech_with_floor(noise=0.08)
+    out = media.normalize_audio(wave, 48000, "off", gate={"threshold": -40.0, "depth": 20.0}, limiter=True)
+    assert abs(_rms_db(out[0, 0][on]) - _rms_db(wave[0, 0][on])) < 1.0
+
+
+def test_limiter_takes_down_only_the_hot_peak():
+    import torch
+    n = 48000 * 3
+    t = torch.arange(n).float() / 48000
+    quiet = 0.10 * torch.sin(2 * math.pi * 200 * t)
+    quiet[10000:10060] = 1.00                             # один горячий транзиент на всю шкалу
+    wave = quiet[None, None].repeat(1, 2, 1)
+    limited = media.normalize_audio(wave, 48000, "lufs-14", limiter=True)
+    plain = media.normalize_audio(wave, 48000, "lufs-14", limiter=False)
+    assert -1.6 < _db(limited) < -0.9                     # пик срезан до потолка (блоки по 2 мс, без клиппинга)
+    assert _db(plain) > _db(limited) + 3.0                 # без лимитера он был сильно выше
+    body = slice(15000, None)
+    assert abs(_rms_db(limited[0, 0][body]) - _rms_db(plain[0, 0][body])) < 0.3   # остальной фильм не понижен
+
+
+def test_limiter_is_a_no_op_below_the_ceiling():
+    wave = _sine(0.25)
+    out = media.normalize_audio(wave, 48000, "off", gate=None, limiter=True)
+    assert torch.allclose(out, wave, atol=1e-6)
